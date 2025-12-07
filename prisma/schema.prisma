@@ -1,0 +1,1153 @@
+// prisma/schema.prisma
+
+// -----------------------------
+// Generator & Datasource
+// -----------------------------
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -----------------------------
+// Enums
+// -----------------------------
+
+/// نقش کاربر در سیستم
+enum UserRole {
+  ADMIN
+  TEACHER
+  STUDENT
+}
+
+/// نوع نوبت (ترم/نوبت در سال تحصیلی)
+enum TermType {
+  FIRST // نوبت اول
+  SECOND // نوبت دوم
+}
+
+/// وضعیت زندگی هنرجو - با چه کسی زندگی می‌کند
+enum LivingSituation {
+  BOTH_PARENTS // با پدر و مادر
+  FATHER_ONLY // فقط با پدر
+  MOTHER_ONLY // فقط با مادر
+  GUARDIAN_GRANDPARENTS // با پدربزرگ/مادربزرگ
+  GUARDIAN_RELATIVE // با یکی از اقوام (عمو، دایی، خاله، ...)
+  GUARDIAN_OTHER // قیم غیرخویشاوند
+  DORMITORY // خوابگاه
+  OTHER // سایر موارد
+}
+
+/// نوع نسبت والد/ولی نسبت به هنرجو
+enum ParentRelationType {
+  FATHER
+  MOTHER
+  GUARDIAN_OTHER
+}
+
+/// سطح تحصیلات والدین/اولیا/معلم
+enum EducationLevel {
+  ILLITERATE // بی‌سواد
+  PRIMARY_SCHOOL // ابتدایی
+  MIDDLE_SCHOOL // راهنمایی/متوسطه اول
+  HIGH_SCHOOL // متوسطه دوم (ناتمام)
+  DIPLOMA // دیپلم
+  ASSOCIATE_DEGREE // فوق‌دیپلم
+  BACHELOR // کارشناسی
+  MASTER // کارشناسی ارشد
+  DOCTORATE // دکتری
+  HAWZA // تحصیلات حوزوی
+  OTHER // سایر
+}
+
+/// وضعیت پیش‌ثبت‌نام هنرجو
+enum PreRegistrationStatus {
+  PENDING // در انتظار بررسی
+  ACCEPTED // پذیرفته شده
+  REJECTED // رد شده
+  RESERVED // رزرو / لیست انتظار
+}
+
+/// شیفت برگزاری رشته / کلاس
+enum ShiftType {
+  MORNING
+  AFTERNOON
+  EVENING
+}
+
+/// نوع مدرسه: فنی حرفه‌ای یا کار و دانش
+enum SchoolType {
+  TECHNICAL_VOCATIONAL // فنی حرفه‌ای
+  KAR_O_DANESH // کار و دانش
+}
+
+/// وضعیت درخواست مرخصی معلم
+enum LeaveStatus {
+  PENDING // در انتظار بررسی
+  APPROVED // تأیید شده
+  REJECTED // رد شده
+  CANCELLED // لغو شده توسط معلم
+}
+
+/// نوع مرخصی
+enum LeaveType {
+  SICK // استعلاجی
+  PERSONAL // شخصی
+  OFFICIAL // اداری / ماموریت
+  OTHER // سایر
+}
+
+/// سطح دسترسی/نمایش خبر
+enum NewsVisibility {
+  PUBLIC // همه (صفحه عمومی بدون لاگین)
+  LOGGED_IN // همه کاربران لاگین‌شده
+  STUDENTS // فقط دانش‌آموزان
+  TEACHERS // فقط معلم‌ها
+  ADMINS // فقط مدیران/معاونین
+}
+
+/// نوع درس: تئوری یا کارگاهی
+enum CourseType {
+  THEORY
+  WORKSHOP
+}
+
+/// روزهای هفته (بر اساس سیستم آموزشی ایران)
+enum Weekday {
+  SATURDAY
+  SUNDAY
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+}
+
+/// وضعیت حضور هنرجو در جلسه
+enum AttendanceStatus {
+  PRESENT // حاضر
+  ABSENT // غایب
+  EXCUSED // غیبت موجه
+}
+
+enum ExamTerm {
+  FIRST // نوبت اول
+  SECOND // نوبت دوم
+  SUMMER // (اختیاری، برای تابستان)
+}
+
+enum ExamMethod {
+  WRITTEN // کتبی
+  ORAL // شفاهی
+  PRACTICAL
+}
+
+enum ExamCategory {
+  QUIZ // آزمون کلاسی / کوتاه
+  MIDTERM // میان‌ترم / مستمر
+  FINAL // نهایی نوبت
+  OTHER
+}
+
+// -----------------------------
+// Core User / Roles
+// -----------------------------
+
+model User {
+  id       String   @id @default(uuid())
+  username String   @unique
+  password String
+  role     UserRole
+
+  /// Refresh Token هش شده (اگر کاربر فعلاً لاگین است)
+  hashedRefreshToken    String?
+  refreshTokenExpiresAt DateTime?
+
+  decidedLeaveRequests TeacherLeaveRequest[] @relation("LeaveDecidedBy")
+
+  newsPosts NewsPost[] // 👈 خبرهایی که این کاربر نوشته
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  teacher Teacher?
+  student Student?
+}
+
+// -----------------------------
+// Teacher (معلم)
+// -----------------------------
+
+model Teacher {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// نام
+  firstName String
+
+  /// نام خانوادگی
+  lastName String
+
+  /// نام پدر
+  fatherName String?
+
+  /// کد پرسنلی (منحصربه‌فرد)
+  personnelCode String @unique
+
+  /// کد ملی (منحصربه‌فرد)
+  nationalId String @unique
+
+  /// شماره شناسنامه (در صورت وجود)
+  birthCertificateNumber String?
+
+  /// مدرک تحصیلی معلم (از enum EducationLevel)
+  educationLevel EducationLevel?
+
+  /// رشته‌ی تحصیلی معلم (مثلاً "برق صنعتی")
+  majorField String?
+
+  /// سابقه کار (به سال)
+  workExperienceYears Int?
+
+  /// آدرس محل سکونت
+  address String?
+
+  /// تلفن تماس
+  phone String?
+
+  /// تلفن اضطراری
+  emergencyPhone String?
+
+  /// کد پستی
+  postalCode String?
+
+  /// مسیر فایل عکس روی سرور
+  photoPath String?
+
+  /// زمان آخرین به‌روزرسانی عکس
+  photoUpdatedAt DateTime?
+
+  /// انتساب‌هایی که این معلم به عنوان معلم اصلی دارد
+  mainCourseAssignments CourseAssignment[] @relation("MainTeacherAssignments")
+
+  /// انتساب‌هایی که این معلم به عنوان معلم کمکی دارد
+  assistantCourseAssignments CourseAssignment[] @relation("AssistantTeacherAssignments")
+
+  leaveRequests TeacherLeaveRequest[] // 👈 مرخصی‌های این معلم
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  studentAttendances StudentAttendance[]
+  theoryExams        TheoryExam[]
+}
+
+// -----------------------------
+// Student & Parents (هنرجو و والدین)
+// -----------------------------
+
+/// هنرجو (دانش‌آموز هنرستان)
+model Student {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+
+  /// نام
+  firstName String
+
+  /// نام خانوادگی
+  lastName String
+
+  /// کد ملی (منحصربه‌فرد)
+  nationalId String @unique
+
+  /// نام پدر
+  fatherName String
+
+  /// با چه کسی زندگی می‌کند (enum)
+  livingSituation LivingSituation
+
+  /// سریال شناسنامه (مثلاً "د 12/321090")
+  birthCertificateSeries String?
+
+  /// تاریخ تولد (میلادی – تاریخ شمسی در لایه بالاتر هندل می‌شود)
+  birthDate DateTime
+
+  /// آیا چپ‌دست است؟
+  isLeftHanded Boolean @default(false)
+
+  /// معلولیت دارد؟
+  hasDisability Boolean @default(false)
+
+  /// توضیح نوع معلولیت (اگر hasDisability = true)
+  disabilityDescription String?
+
+  /// بیماری خاص دارد؟
+  hasChronicDisease Boolean @default(false)
+
+  /// توضیح بیماری خاص
+  chronicDiseaseDescription String?
+
+  /// داروی خاص مصرف می‌کند؟
+  hasSpecialMedication Boolean @default(false)
+
+  /// توضیح داروی خاص
+  specialMedicationDescription String?
+
+  /// معدل سال قبل (از 20، با دو رقم اعشار)
+  lastYearAverage Decimal? @db.Decimal(4, 2)
+
+  /// نمره ریاضی سال قبل
+  lastYearMathScore Decimal? @db.Decimal(4, 2)
+
+  /// نمره انضباط سال قبل
+  lastYearDisciplineScore Decimal? @db.Decimal(4, 2)
+
+  /// مقطع/پایه تحصیلی سال قبل (مثلاً "کلاس نهم")
+  lastYearEducationLevel String?
+
+  /// نام مدرسه قبلی
+  previousSchoolName String?
+
+  /// آدرس مدرسه قبلی
+  previousSchoolAddress String?
+
+  /// شماره تماس مدرسه قبلی
+  previousSchoolPhone String?
+
+  /// مسیر فایل عکس ۳x۴ روی سرور
+  photoPath      String?
+  photoUpdatedAt DateTime?
+
+  /// ثبت‌نام‌ها در سال‌های تحصیلی مختلف
+  enrollments StudentEnrollment[]
+
+  /// اطلاعات پدر/مادر/ولی
+  parents Parent[]
+
+  /// لینک به رکوردهای پیش‌ثبت‌نامی که نهایتاً به این هنرجو منجر شده‌اند (اختیاری)
+  preRegistrations PreRegistration[] @relation("StudentPreRegistrations")
+
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  studentAttendances StudentAttendance[]
+  workshopScores     WorkshopScore[]
+  theoryExamResults  TheoryExamResult[]
+}
+
+/// اطلاعات پدر/مادر/ولی (بعد از ثبت‌نام قطعی)
+model Parent {
+  id String @id @default(uuid())
+
+  /// هنرجویی که این والد/ولی به او مربوط است
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  /// نسبت (پدر، مادر، سایر اولیا)
+  relation ParentRelationType
+
+  /// نام
+  firstName String
+
+  /// نام خانوادگی
+  lastName String
+
+  /// کد ملی (ممکن است خالی باشد)
+  nationalId String?
+
+  /// شماره شناسنامه
+  birthCertificateNumber String?
+
+  /// شماره تماس (موبایل)
+  mobilePhone String?
+
+  /// مدرک تحصیلی (enum)
+  educationLevel EducationLevel?
+
+  /// شغل
+  jobTitle String?
+
+  /// محل تولد
+  birthPlace String?
+
+  /// محل صدور شناسنامه
+  idCardIssuePlace String?
+
+  /// در قید حیات است؟
+  isAlive Boolean @default(true)
+
+  /// آدرس محل سکونت
+  homeAddress String?
+
+  /// آدرس محل کار
+  workAddress String?
+
+  /// شماره تماس محل کار
+  workPhone String?
+
+  /// وضعیت ایثارگری / حضور در جنگ
+  hasWarParticipation Boolean @default(false)
+
+  /// درصد جانبازی (۰ تا ۱۰۰)
+  veteranPercent Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId])
+}
+
+// -----------------------------
+// Academic Structure (سال تحصیلی، نوبت، رشته، پایه، کلاس)
+// -----------------------------
+
+/// سال تحصیلی (مثلاً 1403-1404)
+model AcademicYear {
+  id        Int      @id @default(autoincrement())
+  label     String   @unique // مثلاً "1403-1404"
+  startDate DateTime
+  endDate   DateTime
+
+  terms            Term[]
+  classGroups      ClassGroup[]
+  enrollments      StudentEnrollment[]
+  preRegistrations PreRegistration[]
+
+  teacherLeaveRequests  TeacherLeaveRequest[] // 👈 مرخصی‌های این سال تحصیلی
+  preRegistrationWindow PreRegistrationWindow? // 👈 بازه پیش‌ثبت‌نام این سال
+
+  courseSessions CourseSession[]
+
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  courseAssignments   CourseAssignment[]
+  weeklyScheduleSlots WeeklyScheduleSlot[]
+  theoryExams         TheoryExam[]
+}
+
+/// نوبت (ترم) در یک سال تحصیلی (نوبت اول/دوم)
+model Term {
+  id             Int          @id @default(autoincrement())
+  type           TermType
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  startDate      DateTime
+  endDate        DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([academicYearId, type])
+}
+
+/// رشته تحصیلی (مثلاً برق صنعتی شیفت صبح / عصر، برای فنی حرفه‌ای یا کار و دانش)
+model FieldOfStudy {
+  id Int @id @default(autoincrement())
+
+  /// نام رشته (مثلاً "برق صنعتی")
+  name String
+
+  /// نوع مدرسه (فنی حرفه‌ای / کار و دانش)
+  schoolType SchoolType
+
+  /// شیفت رشته (صبح / عصر / ...)
+  shift ShiftType
+
+  /// فعال بودن رشته
+  isActive Boolean @default(true)
+
+  /// کلاس‌های این رشته
+  classGroups ClassGroup[]
+
+  /// پیش‌ثبت‌نام‌هایی که این رشته را به عنوان انتخاب اولیه انتخاب کرده‌اند
+  requestedPreRegistrations PreRegistration[] @relation("RequestedFieldOfStudy")
+
+  /// پیش‌ثبت‌نام‌هایی که نهایتاً در این رشته پذیرفته شده‌اند
+  admittedPreRegistrations PreRegistration[] @relation("AdmittedFieldOfStudy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  courses   Course[]
+
+  /// هر ترکیب نام + نوع مدرسه + شیفت باید یکتا باشد
+  @@unique([name, schoolType, shift])
+}
+
+/// پایه (دهم، یازدهم، دوازدهم ...)
+model GradeLevel {
+  id    Int    @id @default(autoincrement())
+  name  String @unique // مثلاً "10" ، "11" ، "12"
+  order Int    @unique // ترتیب برای ارتقا (۱،۲،۳)
+
+  classGroups ClassGroup[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  courses   Course[]
+}
+
+model Course {
+  id Int @id @default(autoincrement())
+
+  /// نام درس (مثلاً "ریاضی ۱" ، "کارگاه برق صنعتی ۱")
+  name String
+
+  /// کد درس (اختیاری، برای گزارش/استاندارها)
+  code String? @unique
+
+  /// نوع درس (تئوری / کارگاهی)
+  type CourseType
+
+  /// رشته مرتبط (می‌تواند خالی باشد برای دروس عمومی)
+  fieldOfStudyId Int?
+  fieldOfStudy   FieldOfStudy? @relation(fields: [fieldOfStudyId], references: [id])
+
+  /// پایه مرتبط (مثلاً دهم، یازدهم) - اختیاری
+  gradeLevelId Int?
+  gradeLevel   GradeLevel? @relation(fields: [gradeLevelId], references: [id])
+
+  /// فعال بودن درس
+  isActive Boolean @default(true)
+
+  /// انتساب‌های این درس به کلاس‌ها
+  assignments CourseAssignment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CourseAssignment {
+  id Int @id @default(autoincrement())
+
+  /// سال تحصیلی
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  /// کلاسی که این درس در آن ارائه می‌شود
+  classGroupId Int
+  classGroup   ClassGroup @relation(fields: [classGroupId], references: [id])
+
+  /// خود درس
+  courseId Int
+  course   Course @relation(fields: [courseId], references: [id])
+
+  /// معلم اصلی (فقط او می‌تواند حضور و غیاب و نمره ثبت کند)
+  mainTeacherId String
+  mainTeacher   Teacher @relation("MainTeacherAssignments", fields: [mainTeacherId], references: [id])
+
+  /// معلم کمکی (برای کارگاه‌ها - اختیاری)
+  assistantTeacherId String?
+  assistantTeacher   Teacher? @relation("AssistantTeacherAssignments", fields: [assistantTeacherId], references: [id])
+
+  /// تعداد ساعت هفتگی (واحد در هفته)
+  weeklyHours Int @default(1)
+
+  theoryExams TheoryExam[]
+
+  /// اسلات‌های برنامه هفتگی برای این انتساب
+  scheduleSlots WeeklyScheduleSlot[]
+  /// جلسات برگزارشده برای این انتساب
+  sessions      CourseSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// در هر سال تحصیلی، برای هر کلاس فقط یک Assignment برای هر درس
+  @@unique([academicYearId, classGroupId, courseId], name: "UniqueClassCoursePerYear")
+}
+
+model WeeklyScheduleSlot {
+  id Int @id @default(autoincrement())
+
+  /// سال تحصیلی (برای راحتی فیلتر)
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  /// کلاس
+  classGroupId Int
+  classGroup   ClassGroup @relation(fields: [classGroupId], references: [id])
+
+  /// انتساب درس-کلاس-معلم
+  courseAssignmentId Int
+  courseAssignment   CourseAssignment @relation(fields: [courseAssignmentId], references: [id])
+
+  sessions CourseSession[]
+
+  /// روز هفته
+  weekday Weekday
+
+  /// دقیقه شروع از ابتدای روز (۰ تا ۱۴۳۹) - مثلاً 8:00 = 480
+  startMinuteOfDay Int
+
+  /// دقیقه پایان از ابتدای روز (بیشتر از startMinuteOfDay)
+  endMinuteOfDay Int
+
+  /// برچسب کلاس/آزمایشگاه (اختیاری)
+  roomLabel String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([academicYearId])
+  @@index([classGroupId])
+  @@index([courseAssignmentId])
+}
+
+model CourseSession {
+  id Int @id @default(autoincrement())
+
+  /// سال تحصیلی
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  /// کلاس
+  classGroupId Int
+  classGroup   ClassGroup @relation(fields: [classGroupId], references: [id])
+
+  /// انتساب درس-کلاس-معلم
+  courseAssignmentId Int
+  courseAssignment   CourseAssignment @relation(fields: [courseAssignmentId], references: [id])
+
+  /// (اختیاری) اسلات برنامه هفتگی‌ای که این جلسه بر اساس آن برگزار شده
+  plannedScheduleSlotId Int?
+  plannedScheduleSlot   WeeklyScheduleSlot? @relation(fields: [plannedScheduleSlotId], references: [id])
+
+  /// تاریخ/زمان جلسه (میلادی - فرانت از شمسی به میلادی تبدیل می‌کند)
+  date DateTime
+
+  /// موضوع جلسه (مثلاً "مدار سری و موازی" برای کارگاه)
+  topic String?
+
+  /// آیا جلسه قفل شده است (بعد از نهایی‌شدن حضور و نمرات)
+  isLocked Boolean @default(false)
+
+  /// حضور و غیاب هنرجوها
+  attendances StudentAttendance[]
+
+  /// نمرات کارگاهی این جلسه
+  workshopScores WorkshopScore[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([academicYearId])
+  @@index([classGroupId])
+  @@index([courseAssignmentId])
+}
+
+model StudentAttendance {
+  id Int @id @default(autoincrement())
+
+  sessionId Int
+  session   CourseSession @relation(fields: [sessionId], references: [id])
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  /// وضعیت حضور (حاضر/غایب/غیبت موجه)
+  status AttendanceStatus
+
+  /// آیا با تأخیر آمده؟
+  isLate Boolean @default(false)
+
+  /// تعداد دقیقه تأخیر (برای حاضرهای با تأخیر)
+  lateMinutes Int @default(0)
+
+  /// توضیح (مثلاً علت غیبت/تأخیر)
+  note String?
+
+  /// معلمی که حضور و غیاب را ثبت/ویرایش کرده
+  markedByTeacherId String
+  markedByTeacher   Teacher @relation(fields: [markedByTeacherId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sessionId, studentId])
+  @@index([studentId])
+}
+
+model WorkshopScore {
+  id Int @id @default(autoincrement())
+
+  sessionId Int
+  session   CourseSession @relation(fields: [sessionId], references: [id])
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  /// نمره گزارش‌کار (۰ تا ۳۰)
+  reportScore Int
+
+  /// نمره انضباط (۰ تا ۱۰)
+  disciplineScore Int
+
+  /// نمره دقت کار (۰ تا ۱۰)
+  workPrecisionScore Int
+
+  /// نمره صحت مدار (۰ تا ۲۵)
+  circuitCorrectnessScore Int
+
+  /// نمره پاسخ به سوالات (۰ تا ۲۵)
+  questionsScore Int
+
+  /// مجموع نمره (۰ تا ۱۰۰)
+  totalScore Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([sessionId, studentId])
+  @@index([studentId])
+}
+
+/// کلاس (مثلاً 101، 201، 301) در یک سال تحصیلی مشخص
+model ClassGroup {
+  id Int @id @default(autoincrement())
+
+  /// کد کلاس - مثلاً "101" ، "201" ، "301"
+  code String
+
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  gradeLevelId Int
+  gradeLevel   GradeLevel @relation(fields: [gradeLevelId], references: [id])
+
+  fieldOfStudyId Int
+  fieldOfStudy   FieldOfStudy @relation(fields: [fieldOfStudyId], references: [id])
+
+  /// ظرفیت کلاس (قابل تنظیم توسط مدیر سایت)
+  capacity Int @default(30)
+
+  /// لینک به کلاس سال بعد (برای ارتقای خودکار)
+  nextClassGroupId Int?
+  nextClassGroup   ClassGroup? @relation("ClassGroupNext", fields: [nextClassGroupId], references: [id])
+
+  /// کلاس‌های قبلی که به این کلاس ارتقا پیدا می‌کنند
+  previousClassGroups ClassGroup[] @relation("ClassGroupNext")
+
+  /// ثبت‌نام هنرجوها در این کلاس
+  enrollments StudentEnrollment[]
+
+  theoryExams TheoryExam[]
+
+  /// پیش‌ثبت‌نام‌هایی که در نهایت به این کلاس تخصیص داده شده‌اند
+  preRegistrations PreRegistration[]
+
+  sessions CourseSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  courseAssignments   CourseAssignment[]
+  weeklyScheduleSlots WeeklyScheduleSlot[]
+
+  @@unique([academicYearId, code]) // 👈 کد کلاس در هر سال تحصیلی یکتا
+  @@index([academicYearId])
+  @@index([gradeLevelId])
+  @@index([fieldOfStudyId])
+}
+
+model TheoryExam {
+  id Int @id @default(autoincrement())
+
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  classGroupId Int
+  classGroup   ClassGroup @relation(fields: [classGroupId], references: [id])
+
+  courseAssignmentId Int
+  courseAssignment   CourseAssignment @relation(fields: [courseAssignmentId], references: [id])
+
+  term     ExamTerm
+  method   ExamMethod
+  category ExamCategory
+
+  title       String?
+  description String?
+
+  /// زمان شروع امتحان
+  startAt DateTime
+
+  /// زمان پایان امتحان
+  endAt DateTime
+
+  /// نمره‌ی کامل امتحان (معمولاً ۲۰ ولی قابل تنظیم)
+  maxScore Int @default(20)
+
+  /// وزن امتحان در محاسبه‌ی نمره‌ی نهایی (۰.۰ تا ۱.۰)
+  weight Float @default(1.0)
+
+  /// اگر معلم ساخته باشد
+  createdByTeacherId String?
+  createdByTeacher   Teacher? @relation(fields: [createdByTeacherId], references: [id])
+
+  /// بعد از قفل شدن، دیگر نمرات و جزئیات قابل تغییر نیست
+  isLocked Boolean @default(false)
+
+  results TheoryExamResult[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([academicYearId])
+  @@index([classGroupId])
+  @@index([courseAssignmentId])
+  @@index([term])
+}
+
+model TheoryExamResult {
+  id Int @id @default(autoincrement())
+
+  theoryExamId Int
+  theoryExam   TheoryExam @relation(fields: [theoryExamId], references: [id])
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  /// نمره امتحان (مثلاً از ۲۰، با اعشار تا یک رقم)
+  score Decimal @db.Decimal(4, 1)
+  note  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([theoryExamId, studentId])
+  @@index([studentId])
+}
+
+/// ثبت‌نام هنرجو در سال تحصیلی و کلاس مشخص
+model StudentEnrollment {
+  id Int @id @default(autoincrement())
+
+  studentId String
+  student   Student @relation(fields: [studentId], references: [id])
+
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  classGroupId Int
+  classGroup   ClassGroup @relation(fields: [classGroupId], references: [id])
+
+  /// آیا این ثبت‌نام در حال حاضر فعال است؟ (برای آن سال)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// یک هنرجو در هر سال تحصیلی فقط یک ثبت‌نام دارد
+  @@unique([studentId, academicYearId])
+  @@index([classGroupId])
+}
+
+// -----------------------------
+// Pre-Registration (پیش‌ثبت‌نام هنرجو)
+// -----------------------------
+
+model PreRegistration {
+  id String @id @default(uuid())
+
+  /// سال تحصیلی‌ای که برای آن پیش‌ثبت‌نام انجام شده
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  /// وضعیت پیش‌ثبت‌نام (در انتظار، پذیرفته، رد شده، رزرو)
+  status PreRegistrationStatus @default(PENDING)
+
+  /// لینک به هنرجوی نهایی (بعد از تبدیل به Student) – اختیاری
+  studentId String?
+  student   Student? @relation("StudentPreRegistrations", fields: [studentId], references: [id])
+
+  /// رشته/شیفت انتخابی توسط هنرجو در فرم (درخواستی)
+  requestedFieldOfStudyId Int?
+  requestedFieldOfStudy   FieldOfStudy? @relation("RequestedFieldOfStudy", fields: [requestedFieldOfStudyId], references: [id])
+
+  /// رشته‌ای که نهایتاً توسط مدیر برای هنرجو پذیرفته شده
+  admittedFieldOfStudyId Int?
+  admittedFieldOfStudy   FieldOfStudy? @relation("AdmittedFieldOfStudy", fields: [admittedFieldOfStudyId], references: [id])
+
+  /// کلاسی که هنرجو بعد از پذیرش به آن اختصاص داده می‌شود
+  assignedClassGroupId Int?
+  assignedClassGroup   ClassGroup? @relation(fields: [assignedClassGroupId], references: [id])
+
+  // --- اطلاعات هنرجو داخل فرم پیش‌ثبت‌نام (snapshot) ---
+
+  /// 👇 شماره تماس اصلی برای پیگیری وضعیت
+  contactPhone String
+
+  /// نام
+  firstName String
+
+  /// نام خانوادگی
+  lastName String
+
+  /// کد ملی
+  nationalId String
+
+  /// نام پدر
+  fatherName String
+
+  /// با چه کسی زندگی می‌کند
+  livingSituation LivingSituation
+
+  /// سریال شناسنامه
+  birthCertificateSeries String?
+
+  /// تاریخ تولد (میلادی)
+  birthDate DateTime
+
+  /// آیا چپ‌دست است؟
+  isLeftHanded Boolean @default(false)
+
+  /// معلولیت دارد؟
+  hasDisability Boolean @default(false)
+
+  /// توضیح معلولیت
+  disabilityDescription String?
+
+  /// بیماری خاص دارد؟
+  hasChronicDisease Boolean @default(false)
+
+  /// توضیح بیماری
+  chronicDiseaseDescription String?
+
+  /// داروی خاص مصرف می‌کند؟
+  hasSpecialMedication Boolean @default(false)
+
+  /// توضیح داروی خاص
+  specialMedicationDescription String?
+
+  /// معدل سال قبل
+  lastYearAverage Decimal? @db.Decimal(4, 2)
+
+  /// نمره ریاضی سال قبل
+  lastYearMathScore Decimal? @db.Decimal(4, 2)
+
+  /// نمره انضباط سال قبل
+  lastYearDisciplineScore Decimal? @db.Decimal(4, 2)
+
+  /// مقطع سال قبل (مثلاً "کلاس نهم")
+  lastYearEducationLevel String?
+
+  /// نام مدرسه قبلی
+  previousSchoolName String?
+
+  /// آدرس مدرسه قبلی
+  previousSchoolAddress String?
+
+  /// شماره تماس مدرسه قبلی
+  previousSchoolPhone String?
+
+  /// مسیر عکس ۳x۴ آپلود‌شده در مرحله پیش‌ثبت‌نام (در صورت وجود)
+  photoPath      String?
+  photoUpdatedAt DateTime?
+
+  /// اطلاعات والدین/اولیا در مرحله پیش‌ثبت‌نام
+  parents PreRegistrationParent[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// هر هنرجو (با یک کد ملی) در هر سال تحصیلی فقط یک پیش‌ثبت‌نام دارد
+  @@unique([nationalId, academicYearId])
+  @@index([academicYearId])
+  @@index([requestedFieldOfStudyId])
+  @@index([admittedFieldOfStudyId])
+  @@index([assignedClassGroupId])
+}
+
+/// اطلاعات والدین/اولیا در مرحله پیش‌ثبت‌نام
+model PreRegistrationParent {
+  id String @id @default(uuid())
+
+  preRegistrationId String
+  preRegistration   PreRegistration @relation(fields: [preRegistrationId], references: [id], onDelete: Cascade)
+
+  /// نسبت (پدر، مادر، سایر)
+  relation ParentRelationType
+
+  /// نام
+  firstName String
+
+  /// نام خانوادگی
+  lastName String
+
+  /// کد ملی (در صورت داشتن)
+  nationalId String?
+
+  /// شماره شناسنامه
+  birthCertificateNumber String?
+
+  /// شماره تماس (موبایل)
+  mobilePhone String?
+
+  /// مدرک تحصیلی
+  educationLevel EducationLevel?
+
+  /// شغل
+  jobTitle String?
+
+  /// محل تولد
+  birthPlace String?
+
+  /// محل صدور شناسنامه
+  idCardIssuePlace String?
+
+  /// در قید حیات است؟
+  isAlive Boolean @default(true)
+
+  /// آدرس محل سکونت
+  homeAddress String?
+
+  /// آدرس محل کار
+  workAddress String?
+
+  /// شماره تماس محل کار
+  workPhone String?
+
+  /// وضعیت ایثارگری / حضور در جنگ
+  hasWarParticipation Boolean @default(false)
+
+  /// درصد جانبازی
+  veteranPercent Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([preRegistrationId])
+}
+
+model TeacherLeaveRequest {
+  id Int @id @default(autoincrement())
+
+  /// معلم درخواست‌دهنده
+  teacherId String
+  teacher   Teacher @relation(fields: [teacherId], references: [id])
+
+  /// سال تحصیلی (اختیاری، ولی برای گزارش‌گیری خیلی مفیده)
+  academicYearId Int?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
+
+  /// نوع مرخصی (استعلاجی، شخصی، ...)
+  type LeaveType?
+
+  /// تاریخ و ساعت شروع مرخصی
+  startDate DateTime
+
+  /// تاریخ و ساعت پایان مرخصی
+  endDate DateTime
+
+  /// آیا کل روز است؟ (اگر false باشد، یعنی بخشی از روز / چند ساعت)
+  isFullDay Boolean @default(true)
+
+  /// توضیحات معلم در مورد علت مرخصی
+  reason String?
+
+  /// وضعیت درخواست
+  status LeaveStatus @default(PENDING)
+
+  /// کاربری که بررسی و تصمیم را ثبت کرده (معمولاً مدیر یا معاون)
+  decidedByUserId String?
+  decidedByUser   User?   @relation("LeaveDecidedBy", fields: [decidedByUserId], references: [id])
+
+  /// تاریخ و زمان تصمیم نهایی (تأیید/رد)
+  decidedAt DateTime?
+
+  /// توضیحات مدیر/معاون (علت تأیید/رد)
+  decisionNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([teacherId])
+  @@index([academicYearId])
+  @@index([status])
+}
+
+model PreRegistrationWindow {
+  id Int @id @default(autoincrement())
+
+  /// سال تحصیلی هدف (مثلاً 1404-1405)
+  academicYearId Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+
+  /// تاریخ و ساعت شروع فعال شدن فرم پیش‌ثبت‌نام
+  startAt DateTime
+
+  /// تاریخ و ساعت پایان
+  endAt DateTime
+
+  /// آیا این پنجره در حال حاضر فعال است؟ (برای بستن دستی در صورت لزوم)
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// برای هر سال تحصیلی نهایتاً یک پنجره فعال منطقی است
+  @@unique([academicYearId])
+  @@index([startAt, endAt])
+}
+
+model NewsPost {
+  id Int @id @default(autoincrement())
+
+  /// عنوان خبر
+  title String
+
+  /// slug برای URL (مثلاً "start-of-new-year")
+  slug String @unique
+
+  /// خلاصه کوتاه (برای لیست خبرها)
+  summary String?
+
+  /// متن کامل خبر (می‌تونه HTML/Markdown/text ساده باشه)
+  content String
+
+  /// سطح نمایش (عمومی، فقط دانش‌آموزان، ...)
+  visibility NewsVisibility @default(PUBLIC)
+
+  /// آیا منتشر شده؟
+  isPublished Boolean @default(false)
+
+  /// از چه زمانی نمایش داده شود (اختیاری)
+  publishAt DateTime?
+
+  /// تا چه زمانی نمایش داده شود (اختیاری – مثلاً برای اطلاعیه‌هایی که تاریخ مصرف دارند)
+  expireAt DateTime?
+
+  /// نویسنده (معمولاً کاربر با نقش ADMIN یا TEACHER)
+  authorUserId String?
+  authorUser   User?   @relation(fields: [authorUserId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublished, visibility, publishAt])
+}
+
+model PublicPageSection {
+  id Int @id @default(autoincrement())
+
+  /// کلید یکتا برای بخش (مثلاً "hero", "about", "labs", "contact")
+  sectionKey String @unique
+
+  /// عنوان بخش
+  title String
+
+  /// متن/محتوا (می‌تواند HTML/Markdown/JSON باشد)
+  content String
+
+  /// ترتیب نمایش (کوچک‌تر = بالاتر)
+  displayOrder Int @default(0)
+
+  /// فعال/غیرفعال بودن این بخش
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

@@ -14,12 +14,16 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PreRegistrationModule } from './modules/preregistration/preregistration.module';
-import { AcademicModule } from './modules/academic/academic.module';
+
 import { TeacherLeaveModule } from './modules/teacher-leave/teacher-leave.module';
 import { TeachingModule } from './modules/teaching/teaching.module';
 import { ClassSessionModule } from './modules/class-session/class-session.module';
 import { TheoryExamModule } from './modules/theory-exam/theory-exam.module';
 import { ReportsModule } from './modules/reports/reports.module';
+import { StudentModule } from './modules/student/student.module';
+import { AcademicModule } from './modules/academic/academic.module';
+import { NewsModule } from './modules/news/news.module';
+import { PublicPageModule } from './modules/public-page/public-page.module';
 
 @Module({
   imports: [
@@ -53,19 +57,16 @@ import { ReportsModule } from './modules/reports/reports.module';
     TeachingModule,
     ClassSessionModule,
     TheoryExamModule,
-    ReportsModule
+    ReportsModule,
+    StudentModule,
+    NewsModule,
+    PublicPageModule
   ],
   providers: [
     // Rate limiting گلوبال
     {
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
-    },
-    // Role guard گلوبال
-    {
-      provide: APP_GUARD,
-      useFactory: (reflector: Reflector) => new RolesGuard(reflector),
-      inject: [Reflector],
     },
   ],
 })

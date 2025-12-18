@@ -1,8 +1,8 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Param,
-  ParseEnumPipe,
   ParseIntPipe,
   Query,
   UseGuards,
@@ -17,7 +17,7 @@ import { ReportsService } from './reports.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
-import { Prisma, ExamTerm, UserRole } from '@prisma/client';
+import { ExamTerm, UserRole } from '@prisma/client';
 
 @ApiTags('admin-reports')
 @ApiBearerAuth('access-token')
@@ -35,10 +35,7 @@ export class AdminReportsController {
     @Param('studentId') studentId: string,
     @Param('academicYearId', ParseIntPipe) academicYearId: number,
   ) {
-    return this.reportsService.getStudentYearReport(
-      studentId,
-      academicYearId,
-    );
+    return this.reportsService.getStudentYearReport(studentId, academicYearId);
   }
 
   @Get('class-groups/:classGroupId/academic-years/:academicYearId')
@@ -49,10 +46,7 @@ export class AdminReportsController {
     @Param('classGroupId', ParseIntPipe) classGroupId: number,
     @Param('academicYearId', ParseIntPipe) academicYearId: number,
   ) {
-    return this.reportsService.getClassYearReport(
-      classGroupId,
-      academicYearId,
-    );
+    return this.reportsService.getClassYearReport(classGroupId, academicYearId);
   }
 
   @Get('theory-exams')
@@ -62,33 +56,48 @@ export class AdminReportsController {
   })
   @ApiQuery({ name: 'academicYearId', required: false })
   @ApiQuery({ name: 'classGroupId', required: false })
-  @ApiQuery({
-    name: 'term',
-    required: false,
-    enum: ExamTerm,
-  })
+  @ApiQuery({ name: 'term', required: false, enum: ExamTerm })
   @ApiQuery({ name: 'courseAssignmentId', required: false })
   listTheoryExams(
     @Query('academicYearId') academicYearIdRaw?: string,
     @Query('classGroupId') classGroupIdRaw?: string,
-    @Query('term', new ParseEnumPipe(ExamTerm, { optional: true }))
-    term?: ExamTerm,
+    @Query('term') termRaw?: string,
     @Query('courseAssignmentId') courseAssignmentIdRaw?: string,
   ) {
-    const academicYearId = academicYearIdRaw
-      ? parseInt(academicYearIdRaw, 10)
-      : undefined;
-    const classGroupId = classGroupIdRaw
-      ? parseInt(classGroupIdRaw, 10)
-      : undefined;
-    const courseAssignmentId = courseAssignmentIdRaw
-      ? parseInt(courseAssignmentIdRaw, 10)
-      : undefined;
+    const academicYearId = this.parseOptionalPositiveInt(
+      'academicYearId',
+      academicYearIdRaw,
+    );
+    const classGroupId = this.parseOptionalPositiveInt('classGroupId', classGroupIdRaw);
+    const courseAssignmentId = this.parseOptionalPositiveInt(
+      'courseAssignmentId',
+      courseAssignmentIdRaw,
+    );
+    const term = this.parseOptionalExamTerm(termRaw);
 
-    // از سرویس TheoryExamService هم میشه استفاده کرد، اما اگر فقط ReportsService باشه، این رو حذف کن
-    return {
-      message:
-        'برای لیست کامل امتحانات قبلاً ماژول TheoryExam ساخته شده است؛ این endpoint را می‌توان بعداً به آن سرویس متصل کرد.',
-    };
+    return this.reportsService.listTheoryExams({
+      academicYearId,
+      classGroupId,
+      courseAssignmentId,
+      term,
+    });
+  }
+
+  private parseOptionalPositiveInt(name: string, raw?: string): number | undefined {
+    if (raw == null || raw === '') return undefined;
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new BadRequestException(`${name} نامعتبر است`);
+    }
+    return n;
+  }
+
+  private parseOptionalExamTerm(raw?: string): ExamTerm | undefined {
+    if (raw == null || raw === '') return undefined;
+    const values = Object.values(ExamTerm) as string[];
+    if (!values.includes(raw)) {
+      throw new BadRequestException('term نامعتبر است');
+    }
+    return raw as ExamTerm;
   }
 }

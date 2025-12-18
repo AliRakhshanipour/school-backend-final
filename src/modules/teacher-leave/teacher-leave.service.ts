@@ -1,4 +1,3 @@
-// src/modules/teacher-leave/teacher-leave.service.ts
 import {
   BadRequestException,
   ForbiddenException,
@@ -6,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { Prisma, LeaveStatus, LeaveType } from '@prisma/client';
+import { LeaveStatus, LeaveType } from '@prisma/client';
 import { CreateTeacherLeaveRequestDto } from './dto/create-teacher-leave-request.dto';
 import { TeacherLeaveFiltersDto } from './dto/teacher-leave-filters.dto';
 
@@ -14,57 +13,46 @@ import { TeacherLeaveFiltersDto } from './dto/teacher-leave-filters.dto';
 export class TeacherLeaveService {
   constructor(private readonly prisma: PrismaService) {}
 
-  // ------------ Helpers ------------
+  // خروجی امن برای جلوگیری از لو رفتن password و ...
+  private readonly safeUserSelect = {
+    select: { id: true, username: true, role: true, createdAt: true },
+  };
+
+  private parseOptionalDate(value?: string, fieldName = 'date'): Date | undefined {
+    if (!value) return undefined;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) {
+      throw new BadRequestException(`مقدار ${fieldName} نامعتبر است`);
+    }
+    return d;
+  }
 
   private async getTeacherIdByUserId(userId: string): Promise<string> {
-    const teacher = await this.prisma.teacher.findUnique({
-      where: { userId },
-    });
+    const teacher = await this.prisma.teacher.findUnique({ where: { userId } });
     if (!teacher) {
-      throw new ForbiddenException(
-        'فقط معلم‌ها می‌توانند از این مسیر استفاده کنند',
-      );
+      throw new ForbiddenException('فقط معلم‌ها می‌توانند از این مسیر استفاده کنند');
     }
     return teacher.id;
   }
 
-  /**
-   * پیدا کردن سال تحصیلی بر اساس تاریخ شروع/پایان (اگر در بازه یکی از سال‌ها باشد)
-   */
-  private async detectAcademicYearId(
-    start: Date,
-    end: Date,
-  ): Promise<number | null> {
+  private async detectAcademicYearId(start: Date, end: Date): Promise<number | null> {
     const year = await this.prisma.academicYear.findFirst({
-      where: {
-        startDate: { lte: start },
-        endDate: { gte: end },
-      },
+      where: { startDate: { lte: start }, endDate: { gte: end } },
+      select: { id: true },
     });
     return year ? year.id : null;
   }
 
-  /**
-   * چک تداخل مرخصی با مرخصی‌های قبلی (PENDING/APPROVED) برای همان معلم
-   */
-  private async assertNoOverlap(
-    teacherId: string,
-    start: Date,
-    end: Date,
-  ) {
-    const overlapping = await this.prisma.teacherLeaveRequest.findFirst({
+  // نسخه tx-safe برای overlap (بعد از lock)
+  private async assertNoOverlapTx(tx: any, teacherId: string, start: Date, end: Date) {
+    const overlapping = await tx.teacherLeaveRequest.findFirst({
       where: {
         teacherId,
-        status: {
-          in: [
-            LeaveStatus.PENDING,
-            LeaveStatus.APPROVED,
-          ],
-        },
-        // بازه‌ها روی هم بیفتند: start <= existingEnd && end >= existingStart
+        status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
         startDate: { lte: end },
         endDate: { gte: start },
       },
+      select: { id: true },
     });
 
     if (overlapping) {
@@ -76,10 +64,7 @@ export class TeacherLeaveService {
 
   // ------------ Teacher side ------------
 
-  async createForTeacher(
-    userId: string,
-    dto: CreateTeacherLeaveRequestDto,
-  ) {
+  async createForTeacher(userId: string, dto: CreateTeacherLeaveRequestDto) {
     const teacherId = await this.getTeacherIdByUserId(userId);
 
     const start = new Date(dto.startDate);
@@ -88,60 +73,50 @@ export class TeacherLeaveService {
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
       throw new BadRequestException('تاریخ شروع یا پایان نامعتبر است');
     }
-
     if (end <= start) {
-      throw new BadRequestException(
-        'تاریخ پایان باید بعد از تاریخ شروع باشد',
-      );
+      throw new BadRequestException('تاریخ پایان باید بعد از تاریخ شروع باشد');
     }
 
-    // جلوگیری از تداخل
-    await this.assertNoOverlap(teacherId, start, end);
-
-    // تشخیص سال تحصیلی (اگر در یکی از سال‌ها بگنجد)
     const academicYearId = await this.detectAcademicYearId(start, end);
 
-    const created = await this.prisma.teacherLeaveRequest.create({
-      data: {
-        teacherId,
-        academicYearId,
-        type: (dto.type as LeaveType) ?? null,
-        startDate: start,
-        endDate: end,
-        isFullDay: dto.isFullDay,
-        reason: dto.reason ?? null,
-        status: LeaveStatus.PENDING,
-      },
-      include: {
-        teacher: {
-          include: {
-            user: true,
-          },
-        },
-        academicYear: true,
-      },
-    });
+    // جلوگیری از race condition با lock داخل transaction
+    return this.prisma.$transaction(async (tx) => {
+      // قفل روی مرخصی‌های فعال این معلم (برای جلوگیری از ثبت همزمان)
+      await tx.$queryRaw`
+        SELECT id FROM "TeacherLeaveRequest"
+        WHERE "teacherId" = ${teacherId}
+          AND "status" IN ('PENDING','APPROVED')
+        FOR UPDATE
+      `;
 
-    return created;
+      await this.assertNoOverlapTx(tx, teacherId, start, end);
+
+      return tx.teacherLeaveRequest.create({
+        data: {
+          teacherId,
+          academicYearId,
+          type: (dto.type as LeaveType) ?? null,
+          startDate: start,
+          endDate: end,
+          isFullDay: dto.isFullDay,
+          reason: dto.reason ?? null,
+          status: LeaveStatus.PENDING,
+        },
+        include: {
+          teacher: { include: { user: this.safeUserSelect } },
+          academicYear: true,
+        },
+      });
+    });
   }
 
-  async findMyRequests(
-    userId: string,
-    status?: LeaveStatus,
-  ) {
+  async findMyRequests(userId: string, status?: LeaveStatus) {
     const teacherId = await this.getTeacherIdByUserId(userId);
 
     return this.prisma.teacherLeaveRequest.findMany({
-      where: {
-        teacherId,
-        ...(status ? { status } : {}),
-      },
-      orderBy: {
-        startDate: 'desc',
-      },
-      include: {
-        academicYear: true,
-      },
+      where: { teacherId, ...(status ? { status } : {}) },
+      orderBy: { startDate: 'desc' },
+      include: { academicYear: true },
     });
   }
 
@@ -150,15 +125,12 @@ export class TeacherLeaveService {
 
     const request = await this.prisma.teacherLeaveRequest.findUnique({
       where: { id },
-      include: {
-        academicYear: true,
-      },
+      include: { academicYear: true },
     });
 
     if (!request || request.teacherId !== teacherId) {
       throw new NotFoundException('درخواست مرخصی پیدا نشد');
     }
-
     return request;
   }
 
@@ -167,23 +139,19 @@ export class TeacherLeaveService {
 
     const request = await this.prisma.teacherLeaveRequest.findUnique({
       where: { id },
+      select: { id: true, teacherId: true, status: true },
     });
 
     if (!request || request.teacherId !== teacherId) {
       throw new NotFoundException('درخواست مرخصی پیدا نشد');
     }
-
     if (request.status !== LeaveStatus.PENDING) {
-      throw new BadRequestException(
-        'فقط درخواست‌های در حال انتظار قابل لغو هستند',
-      );
+      throw new BadRequestException('فقط درخواست‌های در حال انتظار قابل لغو هستند');
     }
 
     return this.prisma.teacherLeaveRequest.update({
       where: { id },
-      data: {
-        status: LeaveStatus.CANCELLED,
-      },
+      data: { status: LeaveStatus.CANCELLED },
     });
   }
 
@@ -192,42 +160,32 @@ export class TeacherLeaveService {
   async adminList(filters: TeacherLeaveFiltersDto) {
     const where: any = {};
 
-    if (filters.teacherId) {
-      where.teacherId = filters.teacherId;
+    if (filters.teacherId) where.teacherId = filters.teacherId;
+    if (filters.status) where.status = filters.status;
+    if (typeof filters.academicYearId === 'number') where.academicYearId = filters.academicYearId;
+
+    const fromDate = this.parseOptionalDate(filters.from, 'from');
+    const toDate = this.parseOptionalDate(filters.to, 'to');
+
+    if (fromDate && toDate && toDate < fromDate) {
+      throw new BadRequestException('بازه تاریخ نامعتبر است (to قبل از from است)');
     }
 
-    if (filters.status) {
-      where.status = filters.status;
-    }
-
-    if (typeof filters.academicYearId === 'number') {
-      where.academicYearId = filters.academicYearId;
-    }
-
-    if (filters.from || filters.to) {
-      where.startDate = {};
-      if (filters.from) {
-        where.startDate.gte = new Date(filters.from);
-      }
-      if (filters.to) {
-        where.startDate.lte = new Date(filters.to);
-      }
+    // فیلتر صحیح بازه زمانی (overlap)
+    if (fromDate || toDate) {
+      where.AND = [
+        ...(toDate ? [{ startDate: { lte: toDate } }] : []),
+        ...(fromDate ? [{ endDate: { gte: fromDate } }] : []),
+      ];
     }
 
     return this.prisma.teacherLeaveRequest.findMany({
       where,
-      orderBy: [
-        { status: 'asc' },
-        { startDate: 'desc' },
-      ],
+      orderBy: [{ status: 'asc' }, { startDate: 'desc' }],
       include: {
-        teacher: {
-          include: {
-            user: true,
-          },
-        },
+        teacher: { include: { user: this.safeUserSelect } },
         academicYear: true,
-        decidedByUser: true,
+        decidedByUser: this.safeUserSelect,
       },
     });
   }
@@ -236,20 +194,13 @@ export class TeacherLeaveService {
     const request = await this.prisma.teacherLeaveRequest.findUnique({
       where: { id },
       include: {
-        teacher: {
-          include: {
-            user: true,
-          },
-        },
+        teacher: { include: { user: this.safeUserSelect } },
         academicYear: true,
-        decidedByUser: true,
+        decidedByUser: this.safeUserSelect,
       },
     });
 
-    if (!request) {
-      throw new NotFoundException('درخواست مرخصی پیدا نشد');
-    }
-
+    if (!request) throw new NotFoundException('درخواست مرخصی پیدا نشد');
     return request;
   }
 
@@ -261,19 +212,15 @@ export class TeacherLeaveService {
   ) {
     const request = await this.prisma.teacherLeaveRequest.findUnique({
       where: { id },
+      select: { id: true, status: true },
     });
 
-    if (!request) {
-      throw new NotFoundException('درخواست مرخصی پیدا نشد');
-    }
-
+    if (!request) throw new NotFoundException('درخواست مرخصی پیدا نشد');
     if (request.status !== LeaveStatus.PENDING) {
-      throw new BadRequestException(
-        'فقط درخواست‌های در حال انتظار قابل تأیید/رد هستند',
-      );
+      throw new BadRequestException('فقط درخواست‌های در حال انتظار قابل تأیید/رد هستند');
     }
 
-    const updated = await this.prisma.teacherLeaveRequest.update({
+    return this.prisma.teacherLeaveRequest.update({
       where: { id },
       data: {
         status,
@@ -282,42 +229,18 @@ export class TeacherLeaveService {
         decisionNote: decisionNote ?? null,
       },
       include: {
-        teacher: {
-          include: {
-            user: true,
-          },
-        },
-        decidedByUser: true,
+        teacher: { include: { user: this.safeUserSelect } },
+        decidedByUser: this.safeUserSelect,
         academicYear: true,
       },
     });
-
-    return updated;
   }
 
-  async adminApprove(
-    id: number,
-    adminUserId: string,
-    decisionNote?: string,
-  ) {
-    return this.adminDecide(
-      id,
-      adminUserId,
-      LeaveStatus.APPROVED,
-      decisionNote,
-    );
+  async adminApprove(id: number, adminUserId: string, decisionNote?: string) {
+    return this.adminDecide(id, adminUserId, LeaveStatus.APPROVED, decisionNote);
   }
 
-  async adminReject(
-    id: number,
-    adminUserId: string,
-    decisionNote?: string,
-  ) {
-    return this.adminDecide(
-      id,
-      adminUserId,
-      LeaveStatus.REJECTED,
-      decisionNote,
-    );
+  async adminReject(id: number, adminUserId: string, decisionNote?: string) {
+    return this.adminDecide(id, adminUserId, LeaveStatus.REJECTED, decisionNote);
   }
 }

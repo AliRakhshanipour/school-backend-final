@@ -36,32 +36,11 @@ export class TeacherLeaveAdminController {
   @ApiOperation({
     summary: 'لیست درخواست‌های مرخصی معلم‌ها (برای مدیر)',
   })
-  @ApiQuery({
-    name: 'teacherId',
-    required: false,
-    description: 'فیلتر براساس آیدی معلم',
-  })
-  @ApiQuery({
-    name: 'status',
-    required: false,
-    enum: LeaveStatus,
-    description: 'فیلتر براساس وضعیت',
-  })
-  @ApiQuery({
-    name: 'academicYearId',
-    required: false,
-    description: 'فیلتر براساس سال تحصیلی',
-  })
-  @ApiQuery({
-    name: 'from',
-    required: false,
-    description: 'فیلتر از تاریخ (ISO)',
-  })
-  @ApiQuery({
-    name: 'to',
-    required: false,
-    description: 'فیلتر تا تاریخ (ISO)',
-  })
+  @ApiQuery({ name: 'teacherId', required: false, description: 'فیلتر براساس آیدی معلم' })
+  @ApiQuery({ name: 'status', required: false, enum: LeaveStatus, description: 'فیلتر براساس وضعیت' })
+  @ApiQuery({ name: 'academicYearId', required: false, description: 'فیلتر براساس سال تحصیلی' })
+  @ApiQuery({ name: 'from', required: false, description: 'فیلتر از تاریخ (ISO)' })
+  @ApiQuery({ name: 'to', required: false, description: 'فیلتر تا تاریخ (ISO)' })
   async list(
     @Query('teacherId') teacherId?: string,
     @Query('status', new ParseEnumPipe(LeaveStatus, { optional: true }))
@@ -79,51 +58,35 @@ export class TeacherLeaveAdminController {
 
     if (academicYearIdRaw) {
       const n = parseInt(academicYearIdRaw, 10);
-      if (!Number.isNaN(n)) {
-        filters.academicYearId = n;
-      }
+      if (!Number.isNaN(n)) filters.academicYearId = n;
     }
 
     return this.teacherLeaveService.adminList(filters);
   }
 
   @Get(':id')
-  @ApiOperation({
-    summary: 'جزئیات یک درخواست مرخصی معلم برای مدیر',
-  })
+  @ApiOperation({ summary: 'جزئیات یک درخواست مرخصی معلم برای مدیر' })
   async getOne(@Param('id', ParseIntPipe) id: number) {
     return this.teacherLeaveService.adminGetById(id);
   }
 
   @Patch(':id/approve')
-  @ApiOperation({
-    summary: 'تأیید درخواست مرخصی معلم توسط مدیر/معاون',
-  })
+  @ApiOperation({ summary: 'تأیید درخواست مرخصی معلم توسط مدیر/معاون' })
   async approve(
     @GetUser('userId') adminUserId: string,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: DecideTeacherLeaveRequestDto,
   ) {
-    return this.teacherLeaveService.adminApprove(
-      id,
-      adminUserId,
-      dto.decisionNote,
-    );
+    return this.teacherLeaveService.adminApprove(id, adminUserId, dto.decisionNote);
   }
 
   @Patch(':id/reject')
-  @ApiOperation({
-    summary: 'رد درخواست مرخصی معلم توسط مدیر/معاون',
-  })
+  @ApiOperation({ summary: 'رد درخواست مرخصی معلم توسط مدیر/معاون' })
   async reject(
     @GetUser('userId') adminUserId: string,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: DecideTeacherLeaveRequestDto,
   ) {
-    return this.teacherLeaveService.adminReject(
-      id,
-      adminUserId,
-      dto.decisionNote,
-    );
+    return this.teacherLeaveService.adminReject(id, adminUserId, dto.decisionNote);
   }
 }

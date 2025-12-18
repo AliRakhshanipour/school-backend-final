@@ -5,14 +5,12 @@ import { CourseAssignmentsService } from './assignments/course-assignments.servi
 import { CourseAssignmentsController } from './assignments/course-assignments.controller';
 import { ScheduleService } from './schedule/schedule.service';
 import { ScheduleController } from './schedule/schedule.controller';
+import { AttendanceModule } from './attendance/attendance.module';
 
 @Module({
+  imports: [AttendanceModule],
   providers: [CoursesService, CourseAssignmentsService, ScheduleService],
-  controllers: [
-    CoursesController,
-    CourseAssignmentsController,
-    ScheduleController,
-  ],
-  exports: [CoursesService, CourseAssignmentsService, ScheduleService],
+  controllers: [CoursesController, CourseAssignmentsController, ScheduleController],
+  exports: [CoursesService, CourseAssignmentsService, ScheduleService, AttendanceModule],
 })
 export class TeachingModule {}

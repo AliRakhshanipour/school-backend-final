@@ -1,4 +1,3 @@
-
 import {
   Body,
   Controller,
@@ -17,12 +16,12 @@ import {
   ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
-import { ClassGroupService } from './class-group.service';
+import { AcademicService } from './academic.service';
 import { CreateClassGroupDto } from './dto/create-class-group.dto';
 import { UpdateClassGroupDto } from './dto/update-class-group.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
+import { Roles } from '../../common/decorators/roles.decorator';
 import { UserRole } from '@prisma/client';
 
 @ApiTags('admin-class-groups')
@@ -31,54 +30,74 @@ import { UserRole } from '@prisma/client';
 @Roles(UserRole.ADMIN)
 @Controller('admin/academic/class-groups')
 export class ClassGroupController {
-  constructor(private readonly classGroupService: ClassGroupService) {}
+  constructor(private readonly academicService: AcademicService) {}
 
   @Post()
   @ApiOperation({ summary: 'ایجاد کلاس جدید' })
   create(@Body() dto: CreateClassGroupDto) {
-    return this.classGroupService.create(dto);
+    return this.academicService.createClassGroup(dto);
   }
 
   @Get()
   @ApiOperation({
     summary:
-      'لیست کلاس‌ها. اگر academicYearId داده شود، فقط کلاس‌های آن سال برگردانده می‌شود.',
+      'لیست کلاس‌ها با فیلتر اختیاری سال تحصیلی / رشته / پایه',
   })
-  @ApiQuery({
-    name: 'academicYearId',
-    required: false,
-    description: 'فیلتر براساس سال تحصیلی',
-  })
-  findAll(@Query('academicYearId') academicYearId?: string) {
-    if (academicYearId) {
-      const idNum = parseInt(academicYearId, 10);
-      if (!Number.isNaN(idNum)) {
-        return this.classGroupService.findByYear(idNum);
-      }
-    }
-    return this.classGroupService.findAll();
+  @ApiQuery({ name: 'academicYearId', required: false })
+  @ApiQuery({ name: 'fieldOfStudyId', required: false })
+  @ApiQuery({ name: 'gradeLevelId', required: false })
+  list(
+    @Query('academicYearId') academicYearIdRaw?: string,
+    @Query('fieldOfStudyId') fieldOfStudyIdRaw?: string,
+    @Query('gradeLevelId') gradeLevelIdRaw?: string,
+  ) {
+    const academicYearId = academicYearIdRaw
+      ? parseInt(academicYearIdRaw, 10)
+      : undefined;
+    const fieldOfStudyId = fieldOfStudyIdRaw
+      ? parseInt(fieldOfStudyIdRaw, 10)
+      : undefined;
+    const gradeLevelId = gradeLevelIdRaw
+      ? parseInt(gradeLevelIdRaw, 10)
+      : undefined;
+
+    return this.academicService.listClassGroups({
+      academicYearId:
+        academicYearId && !Number.isNaN(academicYearId)
+          ? academicYearId
+          : undefined,
+      fieldOfStudyId:
+        fieldOfStudyId && !Number.isNaN(fieldOfStudyId)
+          ? fieldOfStudyId
+          : undefined,
+      gradeLevelId:
+        gradeLevelId && !Number.isNaN(gradeLevelId)
+          ? gradeLevelId
+          : undefined,
+    });
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'مشاهده جزئیات یک کلاس' })
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.classGroupService.findOne(id);
+  get(@Param('id', ParseIntPipe) id: number) {
+    return this.academicService.getClassGroup(id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'ویرایش کلاس' })
+  @ApiOperation({ summary: 'ویرایش اطلاعات کلاس' })
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateClassGroupDto,
   ) {
-    return this.classGroupService.update(id, dto);
+    return this.academicService.updateClassGroup(id, dto);
   }
 
   @Delete(':id')
   @ApiOperation({
-    summary: 'حذف کلاس (فقط اگر هنرجویی در آن ثبت‌نام نشده باشد)',
+    summary:
+      'حذف کلاس (در صورت نداشتن داده آموزشی/ثبت‌نامی وابسته)',
   })
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.classGroupService.remove(id);
+  delete(@Param('id', ParseIntPipe) id: number) {
+    return this.academicService.deleteClassGroup(id);
   }
 }

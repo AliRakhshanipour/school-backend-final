@@ -59,22 +59,7 @@ export class CourseAssignmentsController {
         return this.courseAssignmentsService.findAllByClass(id);
       }
     }
-    // اگر هیچ پارامتری نباشد، همه انتساب‌ها را برای همه کلاس‌ها بدهیم
-    // (برای سادگی اینجا می‌توانیم متد جدا ننویسیم و از findMany مستقیم استفاده کنیم)
-    return this.courseAssignmentsService['prisma'].courseAssignment.findMany({
-      include: {
-        academicYear: true,
-        classGroup: {
-          include: {
-            fieldOfStudy: true,
-            gradeLevel: true,
-          },
-        },
-        course: true,
-        mainTeacher: { include: { user: true } },
-        assistantTeacher: { include: { user: true } },
-      },
-    });
+    return this.courseAssignmentsService.findAll();
   }
 
   @Get(':id')

@@ -307,6 +307,7 @@ export class ClassSessionService {
           lateMinutes: item.lateMinutes ?? 0,
           note: item.note ?? null,
           markedByTeacherId: teacher.id,
+          markedByUserId: teacher.userId,
         },
         create: {
           sessionId: session.id,
@@ -316,6 +317,7 @@ export class ClassSessionService {
           lateMinutes: item.lateMinutes ?? 0,
           note: item.note ?? null,
           markedByTeacherId: teacher.id,
+          markedByUserId: teacher.userId,
         },
       }),
     );

@@ -1,10 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsEnum,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Matches,
+  Min,
 } from 'class-validator';
 import { EducationLevel, ParentRelationType } from '@prisma/client';
 
@@ -34,7 +38,7 @@ export class PreRegistrationParentDto {
   })
   @IsOptional()
   @IsString()
-  @MaxLength(10)
+  @Matches(/^\d{10}$/, { message: 'کد ملی والد باید ۱۰ رقمی باشد' })
   nationalId?: string;
 
   @ApiProperty({
@@ -53,6 +57,7 @@ export class PreRegistrationParentDto {
     description: 'شماره موبایل',
   })
   @IsOptional()
+  @IsString()
   @Matches(/^09\d{9}$/, {
     message: 'شماره موبایل والد نامعتبر است',
   })
@@ -127,13 +132,17 @@ export class PreRegistrationParentDto {
     description: 'آیا رزمنده/ایثارگر است؟',
   })
   @IsOptional()
+  @IsBoolean()
   hasWarParticipation?: boolean;
 
   @ApiProperty({
     example: 25,
     required: false,
-    description: 'درصد جانبازی',
+    description: 'درصد جانبازی (۰ تا ۱۰۰)',
   })
   @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(100)
   veteranPercent?: number;
 }

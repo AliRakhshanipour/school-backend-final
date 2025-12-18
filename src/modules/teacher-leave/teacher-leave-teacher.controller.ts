@@ -46,9 +46,7 @@ export class TeacherLeaveTeacherController {
   }
 
   @Get()
-  @ApiOperation({
-    summary: 'لیست درخواست‌های مرخصی معلم جاری',
-  })
+  @ApiOperation({ summary: 'لیست درخواست‌های مرخصی معلم جاری' })
   @ApiQuery({
     name: 'status',
     required: false,
@@ -64,9 +62,7 @@ export class TeacherLeaveTeacherController {
   }
 
   @Get(':id')
-  @ApiOperation({
-    summary: 'دریافت جزئیات یک درخواست مرخصی متعلق به معلم',
-  })
+  @ApiOperation({ summary: 'دریافت جزئیات یک درخواست مرخصی متعلق به معلم' })
   async findMyOne(
     @GetUser('userId') userId: string,
     @Param('id', ParseIntPipe) id: number,
@@ -75,9 +71,7 @@ export class TeacherLeaveTeacherController {
   }
 
   @Patch(':id/cancel')
-  @ApiOperation({
-    summary: 'لغو درخواست مرخصی در حال انتظار توسط معلم',
-  })
+  @ApiOperation({ summary: 'لغو درخواست مرخصی در حال انتظار توسط معلم' })
   async cancelMy(
     @GetUser('userId') userId: string,
     @Param('id', ParseIntPipe) id: number,

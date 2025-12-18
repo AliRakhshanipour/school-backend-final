@@ -6,16 +6,17 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import { CreatePreRegistrationDto } from './dto/create-preregistration.dto';
-import {
-  PreRegistrationStatus,
-  LivingSituation,
-} from '@prisma/client';
-import { Express } from 'express';
-import * as fs from 'fs';
-import * as path from 'path';
 import { CheckStatusDto } from './dto/check-status.dto';
 import { PreRegistrationStatusResponseDto } from './dto/status-response.dto';
 import { PreRegistrationWindowStatusDto } from './dto/window-status.dto';
+import {
+  LivingSituation,
+  PreRegistrationStatus,
+  Prisma,
+} from '@prisma/client';
+import type { Express } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class PreRegistrationService {
@@ -27,7 +28,8 @@ export class PreRegistrationService {
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
   ) {
-    this.uploadRoot = this.configService.get<string>('upload.root') ?? './uploads';
+    this.uploadRoot =
+      this.configService.get<string>('upload.root') ?? './uploads';
     this.preregDir =
       this.configService.get<string>('upload.preregDir') ??
       'preregistrations';
@@ -60,11 +62,18 @@ export class PreRegistrationService {
   }
 
   private getFileExtension(file: Express.Multer.File): string {
-    const orig = file.originalname;
+    // اول mime-type را معتبر کن
+    const mime = file.mimetype?.toLowerCase();
+    if (mime === 'image/jpeg') return '.jpg';
+    if (mime === 'image/png') return '.png';
+
+    // fallback: بررسی پسوند (برای سازگاری)
+    const orig = file.originalname || '';
     const ext = path.extname(orig).toLowerCase();
     if (['.jpg', '.jpeg', '.png'].includes(ext)) {
-      return ext;
+      return ext === '.jpeg' ? '.jpg' : ext;
     }
+
     throw new BadRequestException('فرمت فایل عکس باید jpg یا png باشد');
   }
 
@@ -72,11 +81,19 @@ export class PreRegistrationService {
     preregId: string,
     file: Express.Multer.File,
   ): Promise<{ relative: string; absolute: string }> {
+    if (!file) {
+      throw new BadRequestException('فایل عکس ارسال نشده است');
+    }
+
     if (file.size > this.maxPhotoSizeBytes) {
       throw new BadRequestException(
-        `حجم فایل عکس نباید بیشتر از ${
-          this.maxPhotoSizeBytes / 1024
-        } کیلوبایت باشد`,
+        `حجم فایل عکس نباید بیشتر از ${this.maxPhotoSizeBytes / 1024} کیلوبایت باشد`,
+      );
+    }
+
+    if (!file.buffer || file.buffer.length === 0) {
+      throw new BadRequestException(
+        'فایل عکس نامعتبر است (buffer خالی). لطفاً دوباره آپلود کنید',
       );
     }
 
@@ -90,16 +107,15 @@ export class PreRegistrationService {
   }
 
   private async movePhotoToAccepted(photoPath: string): Promise<string> {
-    // photoPath شکلش شبیه "preregistrations/pending/<id>.jpg"
     const absOld = path.join(this.uploadRoot, photoPath);
     const ext = path.extname(photoPath);
-    const baseName = path.basename(photoPath, ext); // id
+    const baseName = path.basename(photoPath, ext);
+
     const { relative: newRel, absolute: newAbs } =
       this.getAcceptedPhotoPath(baseName, ext);
 
     await this.ensureDir(path.dirname(newAbs));
 
-    // اگر فایل قدیمی وجود ندارد، چیزی حرکت نمی‌دهیم
     try {
       await fs.promises.rename(absOld, newAbs);
     } catch {
@@ -121,9 +137,6 @@ export class PreRegistrationService {
 
   // ---------- Business Logic ----------
 
-  /**
-   * پیدا کردن پنجره فعال پیش‌ثبت‌نام (اگر وجود داشته باشد)
-   */
   async getActiveWindow(): Promise<PreRegistrationWindowStatusDto> {
     const now = new Date();
 
@@ -133,18 +146,12 @@ export class PreRegistrationService {
         startAt: { lte: now },
         endAt: { gte: now },
       },
-      include: {
-        academicYear: true,
-      },
-      orderBy: {
-        startAt: 'desc',
-      },
+      include: { academicYear: true },
+      orderBy: { startAt: 'desc' },
     });
 
     if (!window) {
-      return {
-        isOpen: false,
-      };
+      return { isOpen: false };
     }
 
     return {
@@ -155,15 +162,12 @@ export class PreRegistrationService {
     };
   }
 
-  /**
-   * ایجاد پیش‌ثبت‌نام از سمت صفحه عمومی
-   */
   async createPublicPreRegistration(
     dto: CreatePreRegistrationDto,
     file?: Express.Multer.File,
   ) {
-    // 1) چک باز بودن پنجره
     const now = new Date();
+
     const window = await this.prisma.preRegistrationWindow.findFirst({
       where: {
         isActive: true,
@@ -177,7 +181,6 @@ export class PreRegistrationService {
       throw new BadRequestException('در حال حاضر پیش‌ثبت‌نام فعال نیست');
     }
 
-    // 2) جلوگیری از ثبت‌نام تکراری در همان سال تحصیلی
     const existing = await this.prisma.preRegistration.findUnique({
       where: {
         nationalId_academicYearId: {
@@ -198,60 +201,71 @@ export class PreRegistrationService {
       throw new BadRequestException('تاریخ تولد نامعتبر است');
     }
 
-    // 3) ساخت رکورد در DB (فعلاً بدون عکس)
-    const created = await this.prisma.preRegistration.create({
-      data: {
-        academicYearId: window.academicYearId,
-        status: PreRegistrationStatus.PENDING,
-        contactPhone: dto.contactPhone,
+    let created: { id: string; status: any; academicYearId: number; contactPhone: string; photoPath: string | null };
 
-        firstName: dto.firstName,
-        lastName: dto.lastName,
-        nationalId: dto.nationalId,
-        fatherName: dto.fatherName,
-        livingSituation: dto.livingSituation as LivingSituation,
-        birthDate,
-        birthCertificateSeries: dto.birthCertificateSeries ?? null,
-        isLeftHanded: dto.isLeftHanded,
-        hasDisability: dto.hasDisability,
-        disabilityDescription: dto.disabilityDescription ?? null,
-        hasChronicDisease: dto.hasChronicDisease,
-        chronicDiseaseDescription: dto.chronicDiseaseDescription ?? null,
-        hasSpecialMedication: dto.hasSpecialMedication,
-        specialMedicationDescription:
-          dto.specialMedicationDescription ?? null,
-        lastYearAverage: dto.lastYearAverage ?? null,
-        lastYearMathScore: dto.lastYearMathScore ?? null,
-        lastYearDisciplineScore: dto.lastYearDisciplineScore ?? null,
-        lastYearEducationLevel: dto.lastYearEducationLevel ?? null,
-        previousSchoolName: dto.previousSchoolName ?? null,
-        previousSchoolAddress: dto.previousSchoolAddress ?? null,
-        previousSchoolPhone: dto.previousSchoolPhone ?? null,
-        requestedFieldOfStudyId: dto.requestedFieldOfStudyId ?? null,
+    try {
+      created = await this.prisma.preRegistration.create({
+        data: {
+          academicYearId: window.academicYearId,
+          status: PreRegistrationStatus.PENDING,
+          contactPhone: dto.contactPhone,
 
-        parents: {
-          create: dto.parents.map((p) => ({
-            relation: p.relation,
-            firstName: p.firstName,
-            lastName: p.lastName,
-            nationalId: p.nationalId ?? null,
-            birthCertificateNumber: p.birthCertificateNumber ?? null,
-            mobilePhone: p.mobilePhone ?? null,
-            educationLevel: p.educationLevel ?? null,
-            jobTitle: p.jobTitle ?? null,
-            birthPlace: p.birthPlace ?? null,
-            idCardIssuePlace: p.idCardIssuePlace ?? null,
-            homeAddress: p.homeAddress ?? null,
-            workAddress: p.workAddress ?? null,
-            workPhone: p.workPhone ?? null,
-            hasWarParticipation: p.hasWarParticipation ?? false,
-            veteranPercent: p.veteranPercent ?? null,
-          })),
+          firstName: dto.firstName,
+          lastName: dto.lastName,
+          nationalId: dto.nationalId,
+          fatherName: dto.fatherName,
+          livingSituation: dto.livingSituation as LivingSituation,
+          birthDate,
+          birthCertificateSeries: dto.birthCertificateSeries ?? null,
+          isLeftHanded: dto.isLeftHanded,
+          hasDisability: dto.hasDisability,
+          disabilityDescription: dto.disabilityDescription ?? null,
+          hasChronicDisease: dto.hasChronicDisease,
+          chronicDiseaseDescription: dto.chronicDiseaseDescription ?? null,
+          hasSpecialMedication: dto.hasSpecialMedication,
+          specialMedicationDescription: dto.specialMedicationDescription ?? null,
+          lastYearAverage: dto.lastYearAverage ?? null,
+          lastYearMathScore: dto.lastYearMathScore ?? null,
+          lastYearDisciplineScore: dto.lastYearDisciplineScore ?? null,
+          lastYearEducationLevel: dto.lastYearEducationLevel ?? null,
+          previousSchoolName: dto.previousSchoolName ?? null,
+          previousSchoolAddress: dto.previousSchoolAddress ?? null,
+          previousSchoolPhone: dto.previousSchoolPhone ?? null,
+          requestedFieldOfStudyId: dto.requestedFieldOfStudyId ?? null,
+
+          parents: {
+            create: dto.parents.map((p) => ({
+              relation: p.relation,
+              firstName: p.firstName,
+              lastName: p.lastName,
+              nationalId: p.nationalId ?? null,
+              birthCertificateNumber: p.birthCertificateNumber ?? null,
+              mobilePhone: p.mobilePhone ?? null,
+              educationLevel: p.educationLevel ?? null,
+              jobTitle: p.jobTitle ?? null,
+              birthPlace: p.birthPlace ?? null,
+              idCardIssuePlace: p.idCardIssuePlace ?? null,
+              homeAddress: p.homeAddress ?? null,
+              workAddress: p.workAddress ?? null,
+              workPhone: p.workPhone ?? null,
+              hasWarParticipation: p.hasWarParticipation ?? false,
+              veteranPercent: p.veteranPercent ?? null,
+            })),
+          },
         },
-      },
-    });
+      });
+    } catch (e: any) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          'برای این کد ملی در این سال تحصیلی قبلاً پیش‌ثبت‌نام انجام شده است',
+        );
+      }
+      throw e;
+    }
 
-    // 4) ذخیره عکس (اگر ارسال شده)
     let finalPhotoPath: string | null = null;
 
     if (file) {
@@ -266,10 +280,7 @@ export class PreRegistrationService {
         });
         finalPhotoPath = updated.photoPath;
       } catch (err) {
-        // اگر ذخیره عکس شکست خورد، رکورد را هم پاک می‌کنیم
-        await this.prisma.preRegistration.delete({
-          where: { id: created.id },
-        });
+        await this.prisma.preRegistration.delete({ where: { id: created.id } });
         throw err;
       }
     }
@@ -283,12 +294,7 @@ export class PreRegistrationService {
     };
   }
 
-  /**
-   * چک وضعیت پیش‌ثبت‌نام با کد ملی + شماره تماس
-   */
-  async checkStatus(
-    dto: CheckStatusDto,
-  ): Promise<PreRegistrationStatusResponseDto> {
+  async checkStatus(dto: CheckStatusDto): Promise<PreRegistrationStatusResponseDto> {
     const prereg = await this.prisma.preRegistration.findFirst({
       where: {
         nationalId: dto.nationalId,
@@ -297,15 +303,9 @@ export class PreRegistrationService {
       include: {
         academicYear: true,
         admittedFieldOfStudy: true,
-        assignedClassGroup: {
-          include: {
-            gradeLevel: true,
-          },
-        },
+        assignedClassGroup: { include: { gradeLevel: true } },
       },
-      orderBy: {
-        createdAt: 'desc',
-      },
+      orderBy: { createdAt: 'desc' },
     });
 
     if (!prereg) {
@@ -352,18 +352,13 @@ export class PreRegistrationService {
       base.classCode = prereg.assignedClassGroup.code;
       base.gradeLevel = prereg.assignedClassGroup.gradeLevel?.name;
 
-      base.message =
-        'شما پذیرفته شده‌اید. اطلاعات رشته و کلاس در ادامه آمده است.';
+      base.message = 'شما پذیرفته شده‌اید. اطلاعات رشته و کلاس در ادامه آمده است.';
       return base;
     }
 
     return base;
   }
 
-  /**
-   * تغییر وضعیت پیش‌ثبت‌نام توسط مدیر/معاون (قبول/رد/رزرو)
-   * و جابجایی عکس به فولدر accepted در صورت قبولی
-   */
   async adminUpdateStatus(
     id: string,
     newStatus: PreRegistrationStatus,
@@ -376,11 +371,7 @@ export class PreRegistrationService {
         academicYear: true,
         admittedFieldOfStudy: true,
         requestedFieldOfStudy: true,
-        assignedClassGroup: {
-          include: {
-            fieldOfStudy: true,
-          },
-        },
+        assignedClassGroup: { include: { fieldOfStudy: true } },
       },
     });
 
@@ -388,7 +379,6 @@ export class PreRegistrationService {
       throw new NotFoundException('پیش‌ثبت‌نام پیدا نشد');
     }
 
-    // اگر قبلاً Student مرتبط دارد، اینجا فعلاً تغییری نمی‌دهیم (بعداً در ماژول ثبت‌نام نهایی)
     if (newStatus === PreRegistrationStatus.ACCEPTED) {
       if (!admittedFieldOfStudyId || !assignedClassGroupId) {
         throw new BadRequestException(
@@ -411,25 +401,20 @@ export class PreRegistrationService {
       }
 
       if (classGroup.academicYearId !== prereg.academicYearId) {
-        throw new BadRequestException(
-          'کلاس انتخابی مربوط به همان سال تحصیلی نیست',
-        );
+        throw new BadRequestException('کلاس انتخابی مربوط به همان سال تحصیلی نیست');
       }
 
       if (classGroup.fieldOfStudyId !== field.id) {
-        throw new BadRequestException(
-          'کلاس انتخابی متعلق به همین رشته نیست',
-        );
+        throw new BadRequestException('کلاس انتخابی متعلق به همین رشته نیست');
       }
 
-      // جابجایی عکس در صورت وجود
       let newPhotoPath: string | null = prereg.photoPath ?? null;
 
       if (prereg.photoPath) {
         newPhotoPath = await this.movePhotoToAccepted(prereg.photoPath);
       }
 
-      const updated = await this.prisma.preRegistration.update({
+      return this.prisma.preRegistration.update({
         where: { id },
         data: {
           status: newStatus,
@@ -439,47 +424,30 @@ export class PreRegistrationService {
           photoUpdatedAt: newPhotoPath ? new Date() : prereg.photoUpdatedAt,
         },
       });
-
-      return updated;
     }
 
-    // سایر وضعیت‌ها: فقط آپدیت ساده
-    const updated = await this.prisma.preRegistration.update({
+    return this.prisma.preRegistration.update({
       where: { id },
-      data: {
-        status: newStatus,
-      },
+      data: { status: newStatus },
     });
-
-    return updated;
   }
 
-  /**
-   * حذف کامل پیش‌ثبت‌نام (مثلاً برای ردشده‌ها)
-   * عکس هم باید از روی سرور حذف شود
-   */
   async adminDelete(id: string) {
     const prereg = await this.prisma.preRegistration.findUnique({
       where: { id },
     });
+
     if (!prereg) {
       throw new NotFoundException('پیش‌ثبت‌نام پیدا نشد');
     }
 
     if (prereg.status === PreRegistrationStatus.ACCEPTED) {
-      throw new BadRequestException(
-        'امکان حذف پیش‌ثبت‌نام پذیرفته‌شده وجود ندارد',
-      );
+      throw new BadRequestException('امکان حذف پیش‌ثبت‌نام پذیرفته‌شده وجود ندارد');
     }
 
-    // اول عکس را حذف می‌کنیم
     await this.deletePhotoIfExists(prereg.photoPath);
 
-    // سپس رکورد را حذف می‌کنیم (والدین با onDelete: Cascade خودکار حذف می‌شوند)
-    await this.prisma.preRegistration.delete({
-      where: { id },
-    });
-
+    await this.prisma.preRegistration.delete({ where: { id } });
     return { success: true };
   }
 }

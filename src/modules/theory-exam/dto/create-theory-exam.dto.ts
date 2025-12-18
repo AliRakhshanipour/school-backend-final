@@ -9,7 +9,7 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { Prisma, ExamTerm, ExamMethod, ExamCategory } from '@prisma/client';
+import { ExamTerm, ExamMethod, ExamCategory } from '@prisma/client';
 
 export class CreateTheoryExamDto {
   @ApiProperty({
@@ -36,19 +36,13 @@ export class CreateTheoryExamDto {
   @IsEnum(ExamCategory)
   category: ExamCategory;
 
-  @ApiProperty({
-    required: false,
-    example: 'امتحان نوبت اول ریاضی ۱',
-  })
+  @ApiProperty({ required: false, example: 'امتحان نوبت اول ریاضی ۱' })
   @IsOptional()
   @IsString()
   @MaxLength(150)
   title?: string;
 
-  @ApiProperty({
-    required: false,
-    example: 'از فصل ۱ تا ۳ کتاب.',
-  })
+  @ApiProperty({ required: false, example: 'از فصل ۱ تا ۳ کتاب.' })
   @IsOptional()
   @IsString()
   @MaxLength(500)
@@ -56,8 +50,7 @@ export class CreateTheoryExamDto {
 
   @ApiProperty({
     example: '2025-12-10T08:00:00.000Z',
-    description:
-      'زمان شروع امتحان (میلادی، ISO). فرانت باید از شمسی به میلادی تبدیل کند.',
+    description: 'زمان شروع امتحان (میلادی، ISO). فرانت باید از شمسی به میلادی تبدیل کند.',
   })
   @IsDateString()
   startAt: string;
@@ -83,8 +76,7 @@ export class CreateTheoryExamDto {
   @ApiProperty({
     required: false,
     example: 50,
-    description:
-      'وزن این امتحان در نمره‌ی نهایی (به درصد، ۱ تا ۱۰۰). مثلاً ۵۰ یعنی ۵۰٪',
+    description: 'وزن این امتحان در نمره‌ی نهایی (به درصد، ۱ تا ۱۰۰).',
   })
   @IsOptional()
   @IsInt()

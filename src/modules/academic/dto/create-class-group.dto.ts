@@ -2,7 +2,6 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   IsInt,
   IsOptional,
-  IsPositive,
   IsString,
   MaxLength,
   Min,
@@ -11,7 +10,7 @@ import {
 export class CreateClassGroupDto {
   @ApiProperty({
     example: '101',
-    description: 'کد کلاس (مثلاً 101، 102، ...)',
+    description: 'کد کلاس (در هر سال باید یکتا باشد، مثلاً 101، 201)',
   })
   @IsString()
   @MaxLength(20)
@@ -22,7 +21,7 @@ export class CreateClassGroupDto {
     description: 'آیدی سال تحصیلی (AcademicYearId)',
   })
   @IsInt()
-  @IsPositive()
+  @Min(1)
   academicYearId: number;
 
   @ApiProperty({
@@ -30,33 +29,35 @@ export class CreateClassGroupDto {
     description: 'آیدی پایه (GradeLevelId)',
   })
   @IsInt()
-  @IsPositive()
+  @Min(1)
   gradeLevelId: number;
 
   @ApiProperty({
-    example: 1,
-    description: 'آیدی رشته تحصیلی (FieldOfStudyId)',
-  })
-  @IsInt()
-  @IsPositive()
-  fieldOfStudyId: number;
-
-  @ApiProperty({
-    example: 30,
-    description: 'ظرفیت کلاس',
+    example: 2,
+    description: 'آیدی رشته (FieldOfStudyId)',
   })
   @IsInt()
   @Min(1)
-  capacity: number;
+  fieldOfStudyId: number;
 
   @ApiProperty({
     required: false,
-    example: 2,
-    description:
-      'آیدی کلاس سال بعد (ClassGroupId) برای ارتقای خودکار (اختیاری)',
+    example: 30,
+    description: 'ظرفیت کلاس (پیش‌فرض ۳۰)',
   })
   @IsOptional()
   @IsInt()
-  @IsPositive()
+  @Min(1)
+  capacity?: number;
+
+  @ApiProperty({
+    required: false,
+    example: 5,
+    description:
+      'آیدی کلاس سال بعد (nextClassGroupId) برای ارتقای خودکار (اختیاری)',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
   nextClassGroupId?: number;
 }

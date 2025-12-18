@@ -40,8 +40,7 @@ export class TheoryExamResultItemDto {
 export class RecordTheoryExamResultsDto {
   @ApiProperty({
     type: [TheoryExamResultItemDto],
-    description:
-      'لیست نمرات هنرجوها برای این امتحان. فرانت بهتره فقط هنرجوهای همین کلاس را بفرسته.',
+    description: 'لیست نمرات هنرجوها برای این امتحان.',
   })
   @IsArray()
   @ValidateNested({ each: true })

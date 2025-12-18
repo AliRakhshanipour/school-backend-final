@@ -9,29 +9,47 @@ import {
 } from '@nestjs/common';
 import { PreRegistrationService } from './preregistration.service';
 import { FileInterceptor } from '@nestjs/platform-express';
-import { ApiBody, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBody,
+  ApiConsumes,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CreatePreRegistrationDto } from './dto/create-preregistration.dto';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { CheckStatusDto } from './dto/check-status.dto';
+import type { Express } from 'express';
+import { memoryStorage } from 'multer';
 
 @ApiTags('public-preregistration')
 @Controller('public/preregistration')
 export class PublicPreRegistrationController {
-  constructor(
-    private readonly preRegistrationService: PreRegistrationService,
-  ) {}
+  constructor(private readonly preRegistrationService: PreRegistrationService) {}
 
   @Get('window')
-  @ApiOperation({
-    summary: 'وضعیت باز/بسته بودن فرم پیش‌ثبت‌نام',
-  })
+  @ApiOperation({ summary: 'وضعیت باز/بسته بودن فرم پیش‌ثبت‌نام' })
   async getWindow() {
     return this.preRegistrationService.getActiveWindow();
   }
 
   @Post()
-  @UseInterceptors(FileInterceptor('photo'))
+  @UseInterceptors(
+    FileInterceptor('photo', {
+      storage: memoryStorage(),
+      limits: { fileSize: 200 * 1024 }, // 200KB
+      fileFilter: (req, file, cb) => {
+        const ok = ['image/jpeg', 'image/png'].includes(file.mimetype);
+        if (!ok) {
+          return cb(
+            new BadRequestException('فرمت فایل عکس باید jpg یا png باشد'),
+            false,
+          );
+        }
+        cb(null, true);
+      },
+    }),
+  )
   @ApiOperation({
     summary: 'ایجاد پیش‌ثبت‌نام جدید از صفحه عمومی (با آپلود عکس)',
   })
@@ -74,6 +92,7 @@ export class PublicPreRegistrationController {
       whitelist: true,
       forbidNonWhitelisted: true,
     });
+
     if (errors.length > 0) {
       throw new BadRequestException(errors);
     }

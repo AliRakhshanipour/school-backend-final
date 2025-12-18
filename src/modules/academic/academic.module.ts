@@ -1,24 +1,20 @@
 import { Module } from '@nestjs/common';
-import { AcademicYearService } from './academic-year.service';
+import { AcademicService } from './academic.service';
 import { AcademicYearController } from './academic-year.controller';
-import { FieldOfStudyService } from './field-of-study.service';
+import { GradeLevelController } from './grade-level.controller';
 import { FieldOfStudyController } from './field-of-study.controller';
-import { PublicFieldOfStudyController } from './public-field-of-study.controller';
-import { ClassGroupService } from './class-group.service';
 import { ClassGroupController } from './class-group.controller';
+import { PromotionController } from './promotion.controller';
 
 @Module({
-  providers: [
-    AcademicYearService,
-    FieldOfStudyService,
-    ClassGroupService,
-  ],
+  providers: [AcademicService],
   controllers: [
     AcademicYearController,
+    GradeLevelController,
     FieldOfStudyController,
-    PublicFieldOfStudyController,
     ClassGroupController,
+    PromotionController,
   ],
-  exports: [FieldOfStudyService, ClassGroupService, AcademicYearService],
+  exports: [AcademicService],
 })
 export class AcademicModule {}

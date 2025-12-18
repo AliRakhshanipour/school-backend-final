@@ -8,11 +8,7 @@ import {
   Post,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { TheoryExamService } from './theory-exam.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -31,39 +27,26 @@ export class TheoryExamTeacherController {
   constructor(private readonly theoryExamService: TheoryExamService) {}
 
   @Post('course-assignments/:assignmentId/theory-exams')
-  @ApiOperation({
-    summary: 'ثبت امتحان جدید برای یک درس/کلاس توسط معلم اصلی',
-  })
+  @ApiOperation({ summary: 'ثبت امتحان جدید برای یک درس/کلاس توسط معلم اصلی' })
   createExam(
     @GetUser('userId') userId: string,
     @Param('assignmentId', ParseIntPipe) assignmentId: number,
     @Body() dto: CreateTheoryExamDto,
   ) {
-    return this.theoryExamService.createExamByTeacher(
-      userId,
-      assignmentId,
-      dto,
-    );
+    return this.theoryExamService.createExamByTeacher(userId, assignmentId, dto);
   }
 
   @Get('course-assignments/:assignmentId/theory-exams')
-  @ApiOperation({
-    summary: 'لیست امتحان‌های یک درس/کلاس برای معلم اصلی',
-  })
+  @ApiOperation({ summary: 'لیست امتحان‌های یک درس/کلاس برای معلم اصلی' })
   listExams(
     @GetUser('userId') userId: string,
     @Param('assignmentId', ParseIntPipe) assignmentId: number,
   ) {
-    return this.theoryExamService.listExamsForTeacher(
-      userId,
-      assignmentId,
-    );
+    return this.theoryExamService.listExamsForTeacher(userId, assignmentId);
   }
 
   @Get('theory-exams/:examId')
-  @ApiOperation({
-    summary: 'جزئیات یک امتحان تئوری (به همراه نمرات) برای معلم',
-  })
+  @ApiOperation({ summary: 'جزئیات یک امتحان تئوری (به همراه نمرات) برای معلم' })
   getExamDetails(
     @GetUser('userId') userId: string,
     @Param('examId', ParseIntPipe) examId: number,
@@ -72,18 +55,12 @@ export class TheoryExamTeacherController {
   }
 
   @Patch('theory-exams/:examId/results')
-  @ApiOperation({
-    summary: 'ثبت/ویرایش نمرات هنرجوها برای یک امتحان توسط معلم اصلی',
-  })
+  @ApiOperation({ summary: 'ثبت/ویرایش نمرات هنرجوها برای یک امتحان توسط معلم اصلی' })
   recordResults(
     @GetUser('userId') userId: string,
     @Param('examId', ParseIntPipe) examId: number,
     @Body() dto: RecordTheoryExamResultsDto,
   ) {
-    return this.theoryExamService.recordResultsForTeacher(
-      userId,
-      examId,
-      dto,
-    );
+    return this.theoryExamService.recordResultsForTeacher(userId, examId, dto);
   }
 }

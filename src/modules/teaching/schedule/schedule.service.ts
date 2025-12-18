@@ -1,33 +1,29 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { CreateScheduleSlotDto } from './dto/create-schedule-slot.dto';
 import { UpdateScheduleSlotDto } from './dto/update-schedule-slot.dto';
-import { Prisma, Weekday } from '@prisma/client';
+import { Weekday } from '@prisma/client';
 
 @Injectable()
 export class ScheduleService {
   constructor(private readonly prisma: PrismaService) {}
 
   private parseTimeToMinutes(time: string): number {
-    // انتظار فرمت "HH:MM"
     const parts = time.split(':');
-    if (parts.length !== 2) {
-      throw new BadRequestException('فرمت ساعت باید HH:MM باشد');
-    }
+    if (parts.length !== 2) throw new BadRequestException('فرمت ساعت باید HH:MM باشد');
+
     const hour = parseInt(parts[0], 10);
     const minute = parseInt(parts[1], 10);
 
     if (
-      Number.isNaN(hour) ||
-      Number.isNaN(minute) ||
-      hour < 0 ||
-      hour > 23 ||
-      minute < 0 ||
-      minute > 59
+      Number.isNaN(hour) || Number.isNaN(minute) ||
+      hour < 0 || hour > 23 ||
+      minute < 0 || minute > 59
     ) {
       throw new BadRequestException('ساعت نامعتبر است');
     }
@@ -35,104 +31,93 @@ export class ScheduleService {
     return hour * 60 + minute;
   }
 
-  private async assertNoConflicts(
-    academicYearId: number,
-    classGroupId: number,
-    mainTeacherId: string,
-    assistantTeacherId: string | null,
-    weekday: Weekday,
-    startMinuteOfDay: number,
-    endMinuteOfDay: number,
-    excludeSlotId?: number,
-  ) {
+  /**
+   * overlap درست (نیمه‌باز):  [start, end)
+   * یعنی کلاس پشت‌سرهم مشکلی ندارد:
+   * 08:00-09:00 و 09:00-10:00 => conflict = false
+   */
+  private async assertNoConflicts(params: {
+    academicYearId: number;
+    classGroupId: number;
+    teacherIdsToCheck: string[]; // main + assistant (اگر وجود دارد)
+    weekday: Weekday;
+    startMinuteOfDay: number;
+    endMinuteOfDay: number;
+    excludeSlotId?: number;
+  }) {
+    const {
+      academicYearId,
+      classGroupId,
+      teacherIdsToCheck,
+      weekday,
+      startMinuteOfDay,
+      endMinuteOfDay,
+      excludeSlotId,
+    } = params;
+
+    const slotNot = excludeSlotId ? { id: { not: excludeSlotId } } : {};
+
     // 1) تداخل برای خود کلاس
     const classConflict = await this.prisma.weeklyScheduleSlot.findFirst({
       where: {
+        ...slotNot,
         academicYearId,
         classGroupId,
         weekday,
-        ...(excludeSlotId
-          ? {
-              NOT: {
-                id: excludeSlotId,
-              },
-            }
-          : {}),
-        // بازه‌های زمانی که روی هم بیفتند
-        startMinuteOfDay: { lte: endMinuteOfDay },
-        endMinuteOfDay: { gte: startMinuteOfDay },
+        startMinuteOfDay: { lt: endMinuteOfDay },
+        endMinuteOfDay: { gt: startMinuteOfDay },
       },
+      select: { id: true },
     });
 
     if (classConflict) {
-      throw new BadRequestException(
-        'برای این کلاس در این روز و بازه زمانی قبلاً برنامه ثبت شده است',
-      );
+      throw new BadRequestException('برای این کلاس در این روز و بازه زمانی قبلاً برنامه ثبت شده است');
     }
 
-    // 2) تداخل برای معلم اصلی
+    // 2) تداخل برای هر معلم (چه main چه assistant)
     const teacherConflict = await this.prisma.weeklyScheduleSlot.findFirst({
       where: {
+        ...slotNot,
         academicYearId,
         weekday,
-        ...(excludeSlotId
-          ? {
-              NOT: { id: excludeSlotId },
-            }
-          : {}),
-        startMinuteOfDay: { lte: endMinuteOfDay },
-        endMinuteOfDay: { gte: startMinuteOfDay },
+        startMinuteOfDay: { lt: endMinuteOfDay },
+        endMinuteOfDay: { gt: startMinuteOfDay },
         courseAssignment: {
           OR: [
-            { mainTeacherId },
-            assistantTeacherId ? { assistantTeacherId } : { id: -1 },
+            { mainTeacherId: { in: teacherIdsToCheck } },
+            { assistantTeacherId: { in: teacherIdsToCheck } },
           ],
         },
       },
-      include: {
-        courseAssignment: true,
-      },
+      select: { id: true },
     });
 
     if (teacherConflict) {
-      throw new BadRequestException(
-        'برای یکی از معلم‌های این درس در این بازه زمانی قبلاً کلاس دیگری ثبت شده است',
-      );
+      throw new BadRequestException('برای یکی از معلم‌های این درس در این بازه زمانی قبلاً کلاس دیگری ثبت شده است');
     }
   }
 
   async create(dto: CreateScheduleSlotDto) {
     const assignment = await this.prisma.courseAssignment.findUnique({
       where: { id: dto.courseAssignmentId },
-      include: {
-        academicYear: true,
-        classGroup: true,
-      },
+      include: { academicYear: true, classGroup: true },
     });
-
-    if (!assignment) {
-      throw new NotFoundException('انتساب درس-کلاس پیدا نشد');
-    }
+    if (!assignment) throw new NotFoundException('انتساب درس-کلاس پیدا نشد');
 
     const startMinute = this.parseTimeToMinutes(dto.startTime);
     const endMinute = this.parseTimeToMinutes(dto.endTime);
+    if (endMinute <= startMinute) throw new BadRequestException('زمان پایان باید بعد از زمان شروع باشد');
 
-    if (endMinute <= startMinute) {
-      throw new BadRequestException(
-        'زمان پایان باید بعد از زمان شروع باشد',
-      );
-    }
+    const teacherIds = [assignment.mainTeacherId, assignment.assistantTeacherId].filter(Boolean) as string[];
 
-    // چک تداخل
-    await this.assertNoConflicts(
-      assignment.academicYearId,
-      assignment.classGroupId,
-      assignment.mainTeacherId,
-      assignment.assistantTeacherId,
-      dto.weekday,
-      startMinute,
-      endMinute,
-    );
+    await this.assertNoConflicts({
+      academicYearId: assignment.academicYearId,
+      classGroupId: assignment.classGroupId,
+      teacherIdsToCheck: teacherIds,
+      weekday: dto.weekday,
+      startMinuteOfDay: startMinute,
+      endMinuteOfDay: endMinute,
+    });
 
     return this.prisma.weeklyScheduleSlot.create({
       data: {
@@ -148,18 +133,9 @@ export class ScheduleService {
         courseAssignment: {
           include: {
             course: true,
-            classGroup: {
-              include: {
-                fieldOfStudy: true,
-                gradeLevel: true,
-              },
-            },
-            mainTeacher: {
-              include: { user: true },
-            },
-            assistantTeacher: {
-              include: { user: true },
-            },
+            classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
+            mainTeacher: { include: { user: true } },
+            assistantTeacher: { include: { user: true } },
           },
         },
       },
@@ -168,14 +144,8 @@ export class ScheduleService {
 
   async findByClassGroup(classGroupId: number, academicYearId: number) {
     return this.prisma.weeklyScheduleSlot.findMany({
-      where: {
-        classGroupId,
-        academicYearId,
-      },
-      orderBy: [
-        { weekday: 'asc' },
-        { startMinuteOfDay: 'asc' },
-      ],
+      where: { classGroupId, academicYearId },
+      orderBy: [{ weekday: 'asc' }, { startMinuteOfDay: 'asc' }],
       include: {
         courseAssignment: {
           include: {
@@ -188,33 +158,20 @@ export class ScheduleService {
     });
   }
 
-  async findByTeacher(teacherId: string, academicYearId: number) {
+  async findByTeacher(userId: string, academicYearId: number) {
+    const teacherId = await this.getTeacherIdByUserId(userId);
+
     return this.prisma.weeklyScheduleSlot.findMany({
       where: {
         academicYearId,
         courseAssignment: {
-          OR: [
-            { mainTeacherId: teacherId },
-            { assistantTeacherId: teacherId },
-          ],
+          OR: [{ mainTeacherId: teacherId }, { assistantTeacherId: teacherId }],
         },
       },
-      orderBy: [
-        { weekday: 'asc' },
-        { startMinuteOfDay: 'asc' },
-      ],
+      orderBy: [{ weekday: 'asc' }, { startMinuteOfDay: 'asc' }],
       include: {
-        classGroup: {
-          include: {
-            fieldOfStudy: true,
-            gradeLevel: true,
-          },
-        },
-        courseAssignment: {
-          include: {
-            course: true,
-          },
-        },
+        classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
+        courseAssignment: { include: { course: true } },
       },
     });
   }
@@ -222,45 +179,37 @@ export class ScheduleService {
   async update(id: number, dto: UpdateScheduleSlotDto) {
     const slot = await this.prisma.weeklyScheduleSlot.findUnique({
       where: { id },
-      include: {
-        courseAssignment: true,
-      },
+      include: { courseAssignment: true },
     });
-    if (!slot) {
-      throw new NotFoundException('اسلات برنامه هفتگی پیدا نشد');
+    if (!slot) throw new NotFoundException('اسلات برنامه هفتگی پیدا نشد');
+
+    // جلوگیری از تغییر courseAssignmentId در update (کار درست: delete + create)
+    if (dto.courseAssignmentId && dto.courseAssignmentId !== slot.courseAssignmentId) {
+      throw new BadRequestException('برای تغییر انتساب این اسلات، آن را حذف و مجدد ایجاد کنید');
     }
 
     const assignment = await this.prisma.courseAssignment.findUnique({
       where: { id: slot.courseAssignmentId },
     });
-    if (!assignment) {
-      throw new NotFoundException('انتساب درس-کلاس مربوطه پیدا نشد');
-    }
+    if (!assignment) throw new NotFoundException('انتساب درس-کلاس مربوطه پیدا نشد');
 
     const weekday = dto.weekday ?? slot.weekday;
-    const startMinute = dto.startTime
-      ? this.parseTimeToMinutes(dto.startTime)
-      : slot.startMinuteOfDay;
-    const endMinute = dto.endTime
-      ? this.parseTimeToMinutes(dto.endTime)
-      : slot.endMinuteOfDay;
+    const startMinute = dto.startTime ? this.parseTimeToMinutes(dto.startTime) : slot.startMinuteOfDay;
+    const endMinute = dto.endTime ? this.parseTimeToMinutes(dto.endTime) : slot.endMinuteOfDay;
 
-    if (endMinute <= startMinute) {
-      throw new BadRequestException(
-        'زمان پایان باید بعد از زمان شروع باشد',
-      );
-    }
+    if (endMinute <= startMinute) throw new BadRequestException('زمان پایان باید بعد از زمان شروع باشد');
 
-    await this.assertNoConflicts(
-      assignment.academicYearId,
-      assignment.classGroupId,
-      assignment.mainTeacherId,
-      assignment.assistantTeacherId,
+    const teacherIds = [assignment.mainTeacherId, assignment.assistantTeacherId].filter(Boolean) as string[];
+
+    await this.assertNoConflicts({
+      academicYearId: assignment.academicYearId,
+      classGroupId: assignment.classGroupId,
+      teacherIdsToCheck: teacherIds,
       weekday,
-      startMinute,
-      endMinute,
-      slot.id,
-    );
+      startMinuteOfDay: startMinute,
+      endMinuteOfDay: endMinute,
+      excludeSlotId: slot.id,
+    });
 
     return this.prisma.weeklyScheduleSlot.update({
       where: { id },
@@ -268,18 +217,13 @@ export class ScheduleService {
         weekday,
         startMinuteOfDay: startMinute,
         endMinuteOfDay: endMinute,
-        roomLabel: dto.roomLabel ?? slot.roomLabel,
+        roomLabel: dto.roomLabel !== undefined ? (dto.roomLabel ?? null) : slot.roomLabel,
       },
       include: {
         courseAssignment: {
           include: {
             course: true,
-            classGroup: {
-              include: {
-                fieldOfStudy: true,
-                gradeLevel: true,
-              },
-            },
+            classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
             mainTeacher: { include: { user: true } },
             assistantTeacher: { include: { user: true } },
           },
@@ -289,17 +233,16 @@ export class ScheduleService {
   }
 
   async remove(id: number) {
-    const slot = await this.prisma.weeklyScheduleSlot.findUnique({
-      where: { id },
-    });
-    if (!slot) {
-      throw new NotFoundException('اسلات برنامه هفتگی پیدا نشد');
-    }
+    const slot = await this.prisma.weeklyScheduleSlot.findUnique({ where: { id } });
+    if (!slot) throw new NotFoundException('اسلات برنامه هفتگی پیدا نشد');
 
-    await this.prisma.weeklyScheduleSlot.delete({
-      where: { id },
-    });
-
+    await this.prisma.weeklyScheduleSlot.delete({ where: { id } });
     return { success: true };
+  }
+
+  private async getTeacherIdByUserId(userId: string): Promise<string> {
+    const teacher = await this.prisma.teacher.findUnique({ where: { userId } });
+    if (!teacher) throw new ForbiddenException('فقط معلم‌ها می‌توانند این مسیر را ببینند');
+    return teacher.id;
   }
 }

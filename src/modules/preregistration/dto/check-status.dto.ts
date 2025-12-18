@@ -14,6 +14,7 @@ export class CheckStatusDto {
     example: '09123456789',
     description: 'شماره تماسی که هنگام پیش‌ثبت‌نام وارد شده',
   })
+  @IsString()
   @Matches(/^09\d{9}$/, {
     message: 'شماره تماس نامعتبر است',
   })

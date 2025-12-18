@@ -170,6 +170,12 @@ model User {
 
   newsPosts NewsPost[] // 👈 خبرهایی که این کاربر نوشته
 
+  /// حضور و غیاب دانش‌آموزهایی که این کاربر ثبت/ویرایش کرده (معلم یا مدیر)
+  markedStudentAttendances StudentAttendance[] @relation("MarkedByUser")
+
+  /// حضور و غیاب معلم‌هایی که این کاربر ثبت کرده (معمولاً مدیر)
+  recordedTeacherAttendances TeacherAttendance[] @relation("TeacherAttendanceRecordedBy")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -238,6 +244,10 @@ model Teacher {
   assistantCourseAssignments CourseAssignment[] @relation("AssistantTeacherAssignments")
 
   leaveRequests TeacherLeaveRequest[] // 👈 مرخصی‌های این معلم
+
+  attendanceRecords TeacherAttendance[]
+
+  markedStudentAttendances StudentAttendance[] @relation("MarkedByTeacher")
 
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
@@ -426,6 +436,7 @@ model AcademicYear {
   courseAssignments   CourseAssignment[]
   weeklyScheduleSlots WeeklyScheduleSlot[]
   theoryExams         TheoryExam[]
+  teacherAttendances  TeacherAttendance[]
 }
 
 /// نوبت (ترم) در یک سال تحصیلی (نوبت اول/دوم)
@@ -647,27 +658,57 @@ model StudentAttendance {
   studentId String
   student   Student @relation(fields: [studentId], references: [id])
 
-  /// وضعیت حضور (حاضر/غایب/غیبت موجه)
-  status AttendanceStatus
+  status      AttendanceStatus
+  isLate      Boolean          @default(false)
+  lateMinutes Int              @default(0)
+  note        String?
 
-  /// آیا با تأخیر آمده؟
-  isLate Boolean @default(false)
+  /// ثبت‌کننده (معلم یا مدیر)
+  markedByUserId String
+  markedByUser   User   @relation("MarkedByUser", fields: [markedByUserId], references: [id])
 
-  /// تعداد دقیقه تأخیر (برای حاضرهای با تأخیر)
-  lateMinutes Int @default(0)
+  /// اگر ثبت‌کننده معلم باشد، این هم پر می‌شود (اختیاری)
+  markedByTeacherId String?
+  markedByTeacher   Teacher? @relation("MarkedByTeacher", fields: [markedByTeacherId], references: [id])
 
-  /// توضیح (مثلاً علت غیبت/تأخیر)
-  note String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  teacher   Teacher? @relation(fields: [teacherId], references: [id])
+  teacherId String?
 
-  /// معلمی که حضور و غیاب را ثبت/ویرایش کرده
-  markedByTeacherId String
-  markedByTeacher   Teacher @relation(fields: [markedByTeacherId], references: [id])
+  @@unique([sessionId, studentId])
+  @@index([studentId])
+  @@index([sessionId])
+}
+
+model TeacherAttendance {
+  id Int @id @default(autoincrement())
+
+  teacherId String
+  teacher   Teacher @relation(fields: [teacherId], references: [id])
+
+  /// برای گزارش‌گیری (اختیاری)
+  academicYearId Int?
+  academicYear   AcademicYear? @relation(fields: [academicYearId], references: [id])
+
+  /// فقط تاریخ (بدون ساعت)
+  date DateTime @db.Date
+
+  status      AttendanceStatus
+  isLate      Boolean          @default(false)
+  lateMinutes Int              @default(0)
+  note        String?
+
+  /// ثبت‌کننده (مدیر/معاون)
+  recordedByUserId String
+  recordedByUser   User   @relation("TeacherAttendanceRecordedBy", fields: [recordedByUserId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([sessionId, studentId])
-  @@index([studentId])
+  @@unique([teacherId, date])
+  @@index([academicYearId])
+  @@index([date])
 }
 
 model WorkshopScore {
@@ -840,8 +881,9 @@ model StudentEnrollment {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /// یک هنرجو در هر سال تحصیلی فقط یک ثبت‌نام دارد
   @@unique([studentId, academicYearId])
+  /// یک هنرجو در هر سال تحصیلی فقط یک ثبت‌نام دارد
+  @@index([academicYearId, classGroupId, isActive])
   @@index([classGroupId])
 }
 

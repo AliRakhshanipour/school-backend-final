@@ -13,6 +13,11 @@ import { Weekday } from '@prisma/client';
 export class ScheduleService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ✅ خروجی امن برای User
+  private readonly safeUserSelect = {
+    select: { id: true, username: true, role: true, createdAt: true },
+  };
+
   private parseTimeToMinutes(time: string): number {
     const parts = time.split(':');
     if (parts.length !== 2) throw new BadRequestException('فرمت ساعت باید HH:MM باشد');
@@ -31,15 +36,10 @@ export class ScheduleService {
     return hour * 60 + minute;
   }
 
-  /**
-   * overlap درست (نیمه‌باز):  [start, end)
-   * یعنی کلاس پشت‌سرهم مشکلی ندارد:
-   * 08:00-09:00 و 09:00-10:00 => conflict = false
-   */
   private async assertNoConflicts(params: {
     academicYearId: number;
     classGroupId: number;
-    teacherIdsToCheck: string[]; // main + assistant (اگر وجود دارد)
+    teacherIdsToCheck: string[];
     weekday: Weekday;
     startMinuteOfDay: number;
     endMinuteOfDay: number;
@@ -57,7 +57,6 @@ export class ScheduleService {
 
     const slotNot = excludeSlotId ? { id: { not: excludeSlotId } } : {};
 
-    // 1) تداخل برای خود کلاس
     const classConflict = await this.prisma.weeklyScheduleSlot.findFirst({
       where: {
         ...slotNot,
@@ -74,7 +73,6 @@ export class ScheduleService {
       throw new BadRequestException('برای این کلاس در این روز و بازه زمانی قبلاً برنامه ثبت شده است');
     }
 
-    // 2) تداخل برای هر معلم (چه main چه assistant)
     const teacherConflict = await this.prisma.weeklyScheduleSlot.findFirst({
       where: {
         ...slotNot,
@@ -134,8 +132,8 @@ export class ScheduleService {
           include: {
             course: true,
             classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
-            mainTeacher: { include: { user: true } },
-            assistantTeacher: { include: { user: true } },
+            mainTeacher: { include: { user: this.safeUserSelect } },
+            assistantTeacher: { include: { user: this.safeUserSelect } },
           },
         },
       },
@@ -150,8 +148,8 @@ export class ScheduleService {
         courseAssignment: {
           include: {
             course: true,
-            mainTeacher: { include: { user: true } },
-            assistantTeacher: { include: { user: true } },
+            mainTeacher: { include: { user: this.safeUserSelect } },
+            assistantTeacher: { include: { user: this.safeUserSelect } },
           },
         },
       },
@@ -183,7 +181,6 @@ export class ScheduleService {
     });
     if (!slot) throw new NotFoundException('اسلات برنامه هفتگی پیدا نشد');
 
-    // جلوگیری از تغییر courseAssignmentId در update (کار درست: delete + create)
     if (dto.courseAssignmentId && dto.courseAssignmentId !== slot.courseAssignmentId) {
       throw new BadRequestException('برای تغییر انتساب این اسلات، آن را حذف و مجدد ایجاد کنید');
     }
@@ -224,8 +221,8 @@ export class ScheduleService {
           include: {
             course: true,
             classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
-            mainTeacher: { include: { user: true } },
-            assistantTeacher: { include: { user: true } },
+            mainTeacher: { include: { user: this.safeUserSelect } },
+            assistantTeacher: { include: { user: this.safeUserSelect } },
           },
         },
       },

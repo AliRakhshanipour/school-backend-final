@@ -1,4 +1,3 @@
-// src/modules/public-page/admin-public-page.controller.ts
 import {
   Body,
   Controller,
@@ -29,14 +28,10 @@ import { UserRole } from '@prisma/client';
 @Roles(UserRole.ADMIN)
 @Controller('admin/public-sections')
 export class AdminPublicPageController {
-  constructor(
-    private readonly publicPageService: PublicPageService,
-  ) {}
+  constructor(private readonly publicPageService: PublicPageService) {}
 
   @Post()
-  @ApiOperation({
-    summary: 'ایجاد بخش جدید در صفحه عمومی مدرسه',
-  })
+  @ApiOperation({ summary: 'ایجاد بخش جدید در صفحه عمومی مدرسه' })
   create(@Body() dto: CreateSectionDto) {
     return this.publicPageService.createSection(dto);
   }

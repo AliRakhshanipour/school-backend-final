@@ -28,9 +28,7 @@ export class AdminReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get('students/:studentId/academic-years/:academicYearId')
-  @ApiOperation({
-    summary: 'گزارش کامل سال تحصیلی یک هنرجو (برای مدیر/معاون)',
-  })
+  @ApiOperation({ summary: 'گزارش کامل سال تحصیلی یک هنرجو (برای مدیر/معاون)' })
   getStudentYearReport(
     @Param('studentId') studentId: string,
     @Param('academicYearId', ParseIntPipe) academicYearId: number,
@@ -39,9 +37,7 @@ export class AdminReportsController {
   }
 
   @Get('class-groups/:classGroupId/academic-years/:academicYearId')
-  @ApiOperation({
-    summary: 'گزارش کامل سال تحصیلی یک کلاس (برای مدیر/معاون)',
-  })
+  @ApiOperation({ summary: 'گزارش کامل سال تحصیلی یک کلاس (برای مدیر/معاون)' })
   getClassYearReport(
     @Param('classGroupId', ParseIntPipe) classGroupId: number,
     @Param('academicYearId', ParseIntPipe) academicYearId: number,
@@ -51,8 +47,7 @@ export class AdminReportsController {
 
   @Get('theory-exams')
   @ApiOperation({
-    summary:
-      'لیست کلی امتحان‌های تئوری با فیلترهای اختیاری (برای گزارش‌های مدیریتی)',
+    summary: 'لیست کلی امتحان‌های تئوری با فیلترهای اختیاری (برای گزارش‌های مدیریتی)',
   })
   @ApiQuery({ name: 'academicYearId', required: false })
   @ApiQuery({ name: 'classGroupId', required: false })
@@ -64,15 +59,9 @@ export class AdminReportsController {
     @Query('term') termRaw?: string,
     @Query('courseAssignmentId') courseAssignmentIdRaw?: string,
   ) {
-    const academicYearId = this.parseOptionalPositiveInt(
-      'academicYearId',
-      academicYearIdRaw,
-    );
+    const academicYearId = this.parseOptionalPositiveInt('academicYearId', academicYearIdRaw);
     const classGroupId = this.parseOptionalPositiveInt('classGroupId', classGroupIdRaw);
-    const courseAssignmentId = this.parseOptionalPositiveInt(
-      'courseAssignmentId',
-      courseAssignmentIdRaw,
-    );
+    const courseAssignmentId = this.parseOptionalPositiveInt('courseAssignmentId', courseAssignmentIdRaw);
     const term = this.parseOptionalExamTerm(termRaw);
 
     return this.reportsService.listTheoryExams({

@@ -1,22 +1,31 @@
-// src/modules/public-page/dto/create-section.dto.ts
 import { ApiProperty } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   MaxLength,
+  Matches,
   Min,
 } from 'class-validator';
 
 export class CreateSectionDto {
   @ApiProperty({
     example: 'hero',
-    description:
-      'کلید یکتا برای بخش (مثلاً hero, about, contact)',
+    description: 'کلید یکتا برای بخش (مثلاً hero, about, contact)',
   })
   @IsString()
+  @IsNotEmpty()
   @MaxLength(50)
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
+  @Matches(/^[a-z0-9_-]+$/, {
+    message:
+      'sectionKey فقط می‌تواند شامل حروف انگلیسی کوچک، عدد، خط تیره و زیرخط باشد (بدون فاصله)',
+  })
   sectionKey: string;
 
   @ApiProperty({
@@ -24,15 +33,22 @@ export class CreateSectionDto {
     description: 'عنوان بخش',
   })
   @IsString()
+  @IsNotEmpty()
   @MaxLength(200)
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   title: string;
 
   @ApiProperty({
     example: '<p>متن معرفی مدرسه ...</p>',
-    description:
-      'محتوای بخش (HTML/Markdown/JSON بر اساس نیاز فرانت)',
+    description: 'محتوای بخش (HTML/Markdown/JSON بر اساس نیاز فرانت)',
   })
   @IsString()
+  @IsNotEmpty()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
   content: string;
 
   @ApiProperty({

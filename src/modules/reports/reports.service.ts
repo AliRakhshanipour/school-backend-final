@@ -50,9 +50,7 @@ export class ReportsService {
     });
 
     if (!enrollment) {
-      throw new BadRequestException(
-        'این هنرجو در این سال تحصیلی در هیچ کلاسی ثبت‌نام نشده است',
-      );
+      throw new BadRequestException('این هنرجو در این سال تحصیلی در هیچ کلاسی ثبت‌نام نشده است');
     }
 
     return {
@@ -74,8 +72,19 @@ export class ReportsService {
     });
   }
 
-  private aggregateAttendance(records: any[]) {
-    let total = 0;
+  private buildSessionsCountMap(rows: { courseAssignmentId: number; _count: { _all: number } }[]) {
+    const map = new Map<number, number>();
+    for (const r of rows) map.set(r.courseAssignmentId, r._count._all);
+    return map;
+  }
+
+  /**
+   * ✅ اصلاح: totalHeldSessions (واقعی) + markedSessions (ثبت‌شده)
+   * برای سازگاری، totalSessions همان markedSessions است (مثل قبل)
+   */
+  private aggregateAttendance(records: any[], totalHeldSessions: number) {
+    const markedSessions = records.length;
+
     let present = 0;
     let absent = 0;
     let excused = 0;
@@ -83,7 +92,6 @@ export class ReportsService {
     let totalLateMinutes = 0;
 
     for (const r of records) {
-      total++;
       switch (r.status as AttendanceStatus) {
         case AttendanceStatus.PRESENT:
           present++;
@@ -101,37 +109,71 @@ export class ReportsService {
       }
     }
 
-    const absenceRate = total > 0 ? Number((absent / total).toFixed(3)) : 0;
+    const unmarkedSessions = Math.max((totalHeldSessions ?? 0) - markedSessions, 0);
+
+    const absenceRateMarked =
+      markedSessions > 0 ? Number((absent / markedSessions).toFixed(3)) : 0;
+
+    // اگر حضور کامل ثبت نشده، نرخ بر اساس کل جلسات را null می‌گذاریم تا گمراه‌کننده نباشد
+    const absenceRateHeld =
+      totalHeldSessions > 0 && unmarkedSessions === 0
+        ? Number((absent / totalHeldSessions).toFixed(3))
+        : null;
 
     return {
-      totalSessions: total,
+      // backward compatible:
+      totalSessions: markedSessions,
+      absenceRate: absenceRateMarked,
+
+      // دقیق‌تر:
+      totalHeldSessions: totalHeldSessions ?? 0,
+      markedSessions,
+      unmarkedSessions,
+
       present,
       absent,
       excused,
       lateCount,
       totalLateMinutes,
-      absenceRate,
+
+      absenceRateMarked,
+      absenceRateHeld,
     };
   }
 
-  private aggregateWorkshopScores(scores: any[]) {
-    if (scores.length === 0) {
+  private aggregateWorkshopScores(scores: any[], totalHeldSessions: number) {
+    const scoredSessions = scores.length;
+
+    if (scoredSessions === 0) {
       return {
+        // backward compatible:
         sessionCount: 0,
         averageOutOf100: null,
         finalScoreOutOf20: null,
+
+        // دقیق‌تر:
+        totalHeldSessions: totalHeldSessions ?? 0,
+        scoredSessions: 0,
+        coverage:
+          totalHeldSessions > 0 ? Number((0 / totalHeldSessions).toFixed(3)) : null,
       };
     }
 
     const sum = scores.reduce((acc, s) => acc + this.toNumber(s.totalScore), 0);
-    const count = scores.length;
-    const avg100 = sum / count;
+    const avg100 = sum / scoredSessions;
     const final20 = (avg100 / 100) * 20;
 
     return {
-      sessionCount: count,
+      // backward compatible:
+      sessionCount: scoredSessions,
       averageOutOf100: Number(avg100.toFixed(2)),
       finalScoreOutOf20: Number(final20.toFixed(2)),
+
+      // دقیق‌تر:
+      totalHeldSessions: totalHeldSessions ?? 0,
+      scoredSessions,
+      coverage:
+        totalHeldSessions > 0 ? Number((scoredSessions / totalHeldSessions).toFixed(3)) : null,
     };
   }
 
@@ -151,10 +193,7 @@ export class ReportsService {
       note: string | null;
     }[],
   ) {
-    const perTerm: Record<
-      ExamTerm,
-      { totalWeightedNormalized: number; totalWeight: number }
-    > = {
+    const perTerm: Record<ExamTerm, { totalWeightedNormalized: number; totalWeight: number }> = {
       FIRST: { totalWeightedNormalized: 0, totalWeight: 0 },
       SECOND: { totalWeightedNormalized: 0, totalWeight: 0 },
       SUMMER: { totalWeightedNormalized: 0, totalWeight: 0 },
@@ -187,10 +226,7 @@ export class ReportsService {
       };
     });
 
-    const termFinals: Record<
-      ExamTerm,
-      { finalScoreOutOf20: number | null; totalWeight: number }
-    > = {
+    const termFinals: Record<ExamTerm, { finalScoreOutOf20: number | null; totalWeight: number }> = {
       FIRST: { finalScoreOutOf20: null, totalWeight: 0 },
       SECOND: { finalScoreOutOf20: null, totalWeight: 0 },
       SUMMER: { finalScoreOutOf20: null, totalWeight: 0 },
@@ -208,10 +244,10 @@ export class ReportsService {
       }
     });
 
-    const finals = [
-      termFinals.FIRST.finalScoreOutOf20,
-      termFinals.SECOND.finalScoreOutOf20,
-    ].filter((v) => typeof v === 'number') as number[];
+    // (قانون قبلی حفظ شد) سال نهایی بر اساس ترم اول و دوم
+    const finals = [termFinals.FIRST.finalScoreOutOf20, termFinals.SECOND.finalScoreOutOf20].filter(
+      (v) => typeof v === 'number',
+    ) as number[];
 
     const yearFinal =
       finals.length > 0
@@ -231,16 +267,17 @@ export class ReportsService {
     academicYear: any;
     classGroup: any;
     assignments: any[];
+    sessionsCountByAssignmentId: Map<number, number>;
     attendanceRecords: any[];
     workshopScores: any[];
     examResults: any[];
   }) {
     const {
       studentId,
-      academicYearId,
       academicYear,
       classGroup,
       assignments,
+      sessionsCountByAssignmentId,
       attendanceRecords,
       workshopScores,
       examResults,
@@ -256,35 +293,76 @@ export class ReportsService {
           overallAverageOutOf20: null,
           totalAbsences: 0,
           totalLateMinutes: 0,
+          totalUnmarkedAttendanceSessions: 0,
         },
       };
     }
 
+    // ✅ بهینه‌سازی: ایندکس کردن داده‌ها
+    const attendanceByAssignment = new Map<number, any[]>();
+    for (const r of attendanceRecords) {
+      const aid = r.session?.courseAssignmentId;
+      if (!aid) continue;
+      const arr = attendanceByAssignment.get(aid) ?? [];
+      arr.push(r);
+      attendanceByAssignment.set(aid, arr);
+    }
+
+    const workshopByAssignment = new Map<number, any[]>();
+    for (const r of workshopScores) {
+      const aid = r.session?.courseAssignmentId;
+      if (!aid) continue;
+      const arr = workshopByAssignment.get(aid) ?? [];
+      arr.push(r);
+      workshopByAssignment.set(aid, arr);
+    }
+
+    const examsByAssignment = new Map<number, any[]>();
+    for (const r of examResults) {
+      const aid = r.theoryExam?.courseAssignmentId;
+      if (!aid) continue;
+      const arr = examsByAssignment.get(aid) ?? [];
+      arr.push(r);
+      examsByAssignment.set(aid, arr);
+    }
+
     const coursesReport: any[] = [];
     const finalScores: number[] = [];
+
     let totalAbsences = 0;
     let totalLateMinutes = 0;
+    let totalUnmarkedAttendanceSessions = 0;
 
     for (const assignment of assignments) {
-      const courseAttendance = attendanceRecords.filter(
-        (r) => r.studentId === studentId && r.session.courseAssignmentId === assignment.id,
+      const heldSessions = sessionsCountByAssignmentId.get(assignment.id) ?? 0;
+
+      const courseAttendance = (attendanceByAssignment.get(assignment.id) ?? []).filter(
+        (r) => r.studentId === studentId,
       );
-      const attendanceAgg = this.aggregateAttendance(courseAttendance);
+      const attendanceAgg = this.aggregateAttendance(courseAttendance, heldSessions);
 
       totalAbsences += attendanceAgg.absent;
       totalLateMinutes += attendanceAgg.totalLateMinutes;
+      totalUnmarkedAttendanceSessions += attendanceAgg.unmarkedSessions;
 
-      const courseWorkshopScores = workshopScores.filter(
-        (ws) => ws.studentId === studentId && ws.session.courseAssignmentId === assignment.id,
+      const courseWorkshopScores = (workshopByAssignment.get(assignment.id) ?? []).filter(
+        (ws) => ws.studentId === studentId,
       );
 
       const workshopAgg =
         assignment.course.type === CourseType.WORKSHOP
-          ? this.aggregateWorkshopScores(courseWorkshopScores)
-          : { sessionCount: 0, averageOutOf100: null, finalScoreOutOf20: null };
+          ? this.aggregateWorkshopScores(courseWorkshopScores, heldSessions)
+          : {
+              sessionCount: 0,
+              averageOutOf100: null,
+              finalScoreOutOf20: null,
+              totalHeldSessions: heldSessions,
+              scoredSessions: 0,
+              coverage: null,
+            };
 
-      const courseExamResults = examResults.filter(
-        (er) => er.studentId === studentId && er.theoryExam.courseAssignmentId === assignment.id,
+      const courseExamResults = (examsByAssignment.get(assignment.id) ?? []).filter(
+        (er) => er.studentId === studentId,
       );
 
       const theoryAgg =
@@ -352,6 +430,7 @@ export class ReportsService {
         overallAverageOutOf20: overallAverage,
         totalAbsences,
         totalLateMinutes,
+        totalUnmarkedAttendanceSessions,
       },
     };
   }
@@ -387,6 +466,22 @@ export class ReportsService {
       await this.getStudentAndYearOrThrow(studentId, academicYearId);
 
     const assignments = await this.getAssignmentsForClassYear(academicYearId, classGroup.id);
+    const assignmentIds = assignments.map((a) => a.id);
+
+    const sessionsCountRows =
+      assignmentIds.length === 0
+        ? []
+        : await this.prisma.courseSession.groupBy({
+            by: ['courseAssignmentId'],
+            where: {
+              academicYearId,
+              classGroupId: classGroup.id,
+              courseAssignmentId: { in: assignmentIds },
+            },
+            _count: { _all: true },
+          });
+
+    const sessionsCountByAssignmentId = this.buildSessionsCountMap(sessionsCountRows);
 
     const attendanceRecords = await this.prisma.studentAttendance.findMany({
       where: {
@@ -421,6 +516,7 @@ export class ReportsService {
       academicYear,
       classGroup,
       assignments,
+      sessionsCountByAssignmentId,
       attendanceRecords,
       workshopScores,
       examResults,
@@ -432,7 +528,7 @@ export class ReportsService {
     };
   }
 
-  // ---------- 2) گزارش سال تحصیلی کلاس (بهینه‌شده) ----------
+  // ---------- 2) گزارش سال تحصیلی کلاس ----------
 
   async getClassYearReport(classGroupId: number, academicYearId: number) {
     const [classGroup, academicYear] = await Promise.all([
@@ -464,6 +560,22 @@ export class ReportsService {
 
     const studentIds = enrollments.map((e) => e.studentId);
     const assignments = await this.getAssignmentsForClassYear(academicYearId, classGroupId);
+    const assignmentIds = assignments.map((a) => a.id);
+
+    const sessionsCountRows =
+      assignmentIds.length === 0
+        ? []
+        : await this.prisma.courseSession.groupBy({
+            by: ['courseAssignmentId'],
+            where: {
+              academicYearId,
+              classGroupId,
+              courseAssignmentId: { in: assignmentIds },
+            },
+            _count: { _all: true },
+          });
+
+    const sessionsCountByAssignmentId = this.buildSessionsCountMap(sessionsCountRows);
 
     const [attendanceAll, workshopAll, examsAll] = await Promise.all([
       this.prisma.studentAttendance.findMany({
@@ -476,10 +588,7 @@ export class ReportsService {
       this.prisma.workshopScore.findMany({
         where: {
           studentId: { in: studentIds },
-          session: {
-            academicYearId,
-            courseAssignment: { classGroupId },
-          },
+          session: { academicYearId, courseAssignment: { classGroupId } },
         },
         include: { session: { select: { courseAssignmentId: true } } },
       }),
@@ -523,6 +632,7 @@ export class ReportsService {
         academicYear,
         classGroup,
         assignments,
+        sessionsCountByAssignmentId,
         attendanceRecords: attendanceByStudent.get(sid) ?? [],
         workshopScores: workshopByStudent.get(sid) ?? [],
         examResults: examsByStudent.get(sid) ?? [],
@@ -534,7 +644,7 @@ export class ReportsService {
       });
     }
 
-    // courseStats بر اساس CourseAssignment (نه course.id)
+    // courseStats بر اساس CourseAssignment
     const courseStatsMap = new Map<
       number,
       {
@@ -616,9 +726,7 @@ export class ReportsService {
 
   async getTeacherCourseAssignmentReport(userId: string, courseAssignmentId: number) {
     const teacher = await this.prisma.teacher.findUnique({ where: { userId } });
-    if (!teacher) {
-      throw new ForbiddenException('فقط معلم‌ها به این گزارش دسترسی دارند');
-    }
+    if (!teacher) throw new ForbiddenException('فقط معلم‌ها به این گزارش دسترسی دارند');
 
     const assignment = await this.prisma.courseAssignment.findUnique({
       where: { id: courseAssignmentId },
@@ -628,9 +736,7 @@ export class ReportsService {
         classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
       },
     });
-
     if (!assignment) throw new NotFoundException('انتساب درس-کلاس پیدا نشد');
-
     if (assignment.mainTeacherId !== teacher.id) {
       throw new ForbiddenException('فقط معلم اصلی این درس می‌تواند این گزارش را ببیند');
     }
@@ -638,10 +744,15 @@ export class ReportsService {
     const yearId = assignment.academicYearId;
     const classGroupId = assignment.classGroupId;
 
-    const enrollments = await this.prisma.studentEnrollment.findMany({
-      where: { academicYearId: yearId, classGroupId },
-      include: { student: true },
-    });
+    const [enrollments, totalHeldSessions] = await Promise.all([
+      this.prisma.studentEnrollment.findMany({
+        where: { academicYearId: yearId, classGroupId },
+        include: { student: true },
+      }),
+      this.prisma.courseSession.count({
+        where: { academicYearId: yearId, courseAssignmentId: assignment.id },
+      }),
+    ]);
 
     const attendanceRecords = await this.prisma.studentAttendance.findMany({
       where: { session: { academicYearId: yearId, courseAssignmentId: assignment.id } },
@@ -666,13 +777,13 @@ export class ReportsService {
       const student = enr.student;
 
       const studentAttendance = attendanceRecords.filter((r) => r.studentId === student.id);
-      const attendanceAgg = this.aggregateAttendance(studentAttendance);
+      const attendanceAgg = this.aggregateAttendance(studentAttendance, totalHeldSessions);
 
       const studentWorkshopScores = workshopScores.filter((ws) => ws.studentId === student.id);
       const workshopAgg =
         assignment.course.type === CourseType.WORKSHOP
-          ? this.aggregateWorkshopScores(studentWorkshopScores)
-          : { sessionCount: 0, averageOutOf100: null, finalScoreOutOf20: null };
+          ? this.aggregateWorkshopScores(studentWorkshopScores, totalHeldSessions)
+          : { sessionCount: 0, averageOutOf100: null, finalScoreOutOf20: null, totalHeldSessions, scoredSessions: 0, coverage: null };
 
       const studentExamResults = examResults.filter((er) => er.studentId === student.id);
       const theoryAgg =
@@ -737,6 +848,7 @@ export class ReportsService {
       stats: {
         studentCount: enrollments.length,
         averageScoreOutOf20: averageScore,
+        totalHeldSessions,
       },
     };
   }
@@ -745,9 +857,7 @@ export class ReportsService {
 
   async getStudentYearReportByUser(userId: string, academicYearId: number) {
     const student = await this.prisma.student.findUnique({ where: { userId } });
-    if (!student) {
-      throw new ForbiddenException('فقط هنرجوها به این گزارش دسترسی دارند');
-    }
+    if (!student) throw new ForbiddenException('فقط هنرجوها به این گزارش دسترسی دارند');
     return this.getStudentYearReport(student.id, academicYearId);
   }
 }

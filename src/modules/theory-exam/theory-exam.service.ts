@@ -67,13 +67,18 @@ export class TheoryExamService {
     }
   }
 
+  /**
+   * ✅ FIX حیاتی:
+   * اگر mainTeacherId تهی/نال باشد، چک تداخل معلم را انجام نمی‌دهیم
+   * (چون در غیر این صورت Prisma عملاً دنبال mainTeacherId=null می‌گردد و تداخلِ اشتباه می‌دهد)
+   */
   private async assertNoExamConflictsTx(
     tx: any,
     academicYearId: number,
     classGroupId: number,
     startAt: Date,
     endAt: Date,
-    mainTeacherId: string,
+    mainTeacherId?: string | null,
     excludeExamId?: number,
   ) {
     const whereBase: any = {
@@ -92,16 +97,18 @@ export class TheoryExamService {
       throw new BadRequestException('برای این کلاس در این بازه زمانی امتحان دیگری ثبت شده است');
     }
 
-    // تداخل برای معلم اصلی (در همه کلاس‌ها)
-    const teacherConflict = await tx.theoryExam.findFirst({
-      where: {
-        ...whereBase,
-        courseAssignment: { mainTeacherId },
-      },
-      select: { id: true },
-    });
-    if (teacherConflict) {
-      throw new BadRequestException('برای این معلم در این بازه زمانی امتحان دیگری ثبت شده است');
+    // تداخل برای معلم اصلی (در همه کلاس‌ها) - فقط اگر mainTeacherId معتبر باشد
+    if (mainTeacherId) {
+      const teacherConflict = await tx.theoryExam.findFirst({
+        where: {
+          ...whereBase,
+          courseAssignment: { mainTeacherId },
+        },
+        select: { id: true },
+      });
+      if (teacherConflict) {
+        throw new BadRequestException('برای این معلم در این بازه زمانی امتحان دیگری ثبت شده است');
+      }
     }
   }
 
@@ -168,8 +175,8 @@ export class TheoryExamService {
           classGroupId: assignment.classGroupId,
           courseAssignmentId: assignment.id,
           term: dto.term as ExamTerm,
-          method: dto.method as ExamMethod,
-          category: dto.category as ExamCategory,
+          method: dto.method as any,
+          category: dto.category as any,
           title: dto.title ?? null,
           description: dto.description ?? null,
           startAt,
@@ -224,8 +231,8 @@ export class TheoryExamService {
           classGroupId: assignment.classGroupId,
           courseAssignmentId: assignment.id,
           term: dto.term as ExamTerm,
-          method: dto.method as ExamMethod,
-          category: dto.category as ExamCategory,
+          method: dto.method as any,
+          category: dto.category as any,
           title: dto.title ?? null,
           description: dto.description ?? null,
           startAt,
@@ -285,8 +292,8 @@ export class TheoryExamService {
         where: { id: examId },
         data: {
           term: (dto.term as ExamTerm) ?? exam.term,
-          method: (dto.method as ExamMethod) ?? exam.method,
-          category: (dto.category as ExamCategory) ?? exam.category,
+          method: (dto.method as any) ?? exam.method,
+          category: (dto.category as any) ?? exam.category,
           title: dto.title ?? exam.title,
           description: dto.description ?? exam.description,
           startAt,
@@ -401,7 +408,7 @@ export class TheoryExamService {
     return exam;
   }
 
-  // ---------- Results (کامل شد) ----------
+  // ---------- Results ----------
 
   async recordResultsForTeacher(userId: string, examId: number, dto: RecordTheoryExamResultsDto) {
     return this.prisma.$transaction(async (tx) => {
@@ -442,9 +449,8 @@ export class TheoryExamService {
         },
         select: { studentId: true },
       });
-      const allowed = new Set(enrollments.map(e => e.studentId));
+      const allowed = new Set(enrollments.map((e: any) => e.studentId));
 
-      // upsert نمرات
       await Promise.all(
         dto.items.map((it) => {
           if (!allowed.has(it.studentId)) {
@@ -475,7 +481,6 @@ export class TheoryExamService {
         }),
       );
 
-      // خروجیِ نهایی
       return tx.theoryExam.findUnique({
         where: { id: exam.id },
         include: {

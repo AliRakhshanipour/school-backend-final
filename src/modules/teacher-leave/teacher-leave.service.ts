@@ -35,12 +35,26 @@ export class TeacherLeaveService {
     return teacher.id;
   }
 
+  /**
+   * سال تحصیلی را دقیق و امن تشخیص می‌دهد:
+   * - اگر start و end هر دو داخل یک سال تحصیلی باشند -> همان id
+   * - اگر خارج باشند یا در دو سال متفاوت بیفتند -> null
+   */
   private async detectAcademicYearId(start: Date, end: Date): Promise<number | null> {
-    const year = await this.prisma.academicYear.findFirst({
-      where: { startDate: { lte: start }, endDate: { gte: end } },
-      select: { id: true },
-    });
-    return year ? year.id : null;
+    const [startYear, endYear] = await Promise.all([
+      this.prisma.academicYear.findFirst({
+        where: { startDate: { lte: start }, endDate: { gte: start } },
+        select: { id: true },
+      }),
+      this.prisma.academicYear.findFirst({
+        where: { startDate: { lte: end }, endDate: { gte: end } },
+        select: { id: true },
+      }),
+    ]);
+
+    if (!startYear || !endYear) return null;
+    if (startYear.id !== endYear.id) return null;
+    return startYear.id;
   }
 
   // نسخه tx-safe برای overlap (بعد از lock)
@@ -56,9 +70,7 @@ export class TeacherLeaveService {
     });
 
     if (overlapping) {
-      throw new BadRequestException(
-        'در این بازه زمانی قبلاً مرخصی ثبت شده (در انتظار یا تأیید شده)',
-      );
+      throw new BadRequestException('در این بازه زمانی قبلاً مرخصی ثبت شده (در انتظار یا تأیید شده)');
     }
   }
 
@@ -78,6 +90,12 @@ export class TeacherLeaveService {
     }
 
     const academicYearId = await this.detectAcademicYearId(start, end);
+
+    // ✅ FIX حیاتی: اگر سال تحصیلی تشخیص داده نشد، خطای کنترل‌شده بدهیم
+    // تا به مشکل runtime/constraint روی academicYearId نخوریم.
+    if (academicYearId == null) {
+      throw new BadRequestException('بازه مرخصی باید داخل یک سال تحصیلی معتبر باشد');
+    }
 
     // جلوگیری از race condition با lock داخل transaction
     return this.prisma.$transaction(async (tx) => {

@@ -11,6 +11,20 @@ import { UpdateCourseAssignmentDto } from './dto/update-course-assignment.dto';
 export class CourseAssignmentsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ✅ خروجی امن برای User (جلوگیری از لو رفتن password/refreshToken/...)
+  private readonly safeUserSelect = {
+    select: { id: true, username: true, role: true, createdAt: true },
+  };
+
+  private async getAssignmentDependenciesCounts(courseAssignmentId: number) {
+    const [slots, sessions, exams] = await Promise.all([
+      this.prisma.weeklyScheduleSlot.count({ where: { courseAssignmentId } }),
+      this.prisma.courseSession.count({ where: { courseAssignmentId } }),
+      this.prisma.theoryExam.count({ where: { courseAssignmentId } }),
+    ]);
+    return { slots, sessions, exams, total: slots + sessions + exams };
+  }
+
   async create(dto: CreateCourseAssignmentDto) {
     const academicYear = await this.prisma.academicYear.findUnique({
       where: { id: dto.academicYearId },
@@ -74,8 +88,8 @@ export class CourseAssignmentsService {
       include: {
         classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
         course: true,
-        mainTeacher: { include: { user: true } },
-        assistantTeacher: { include: { user: true } },
+        mainTeacher: { include: { user: this.safeUserSelect } },
+        assistantTeacher: { include: { user: this.safeUserSelect } },
       },
     });
   }
@@ -87,8 +101,8 @@ export class CourseAssignmentsService {
         academicYear: true,
         classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
         course: true,
-        mainTeacher: { include: { user: true } },
-        assistantTeacher: { include: { user: true } },
+        mainTeacher: { include: { user: this.safeUserSelect } },
+        assistantTeacher: { include: { user: this.safeUserSelect } },
       },
     });
   }
@@ -100,8 +114,8 @@ export class CourseAssignmentsService {
         academicYear: true,
         classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
         course: true,
-        mainTeacher: { include: { user: true } },
-        assistantTeacher: { include: { user: true } },
+        mainTeacher: { include: { user: this.safeUserSelect } },
+        assistantTeacher: { include: { user: this.safeUserSelect } },
         scheduleSlots: true,
       },
     });
@@ -120,7 +134,7 @@ export class CourseAssignmentsService {
     let classGroupId = assignment.classGroupId;
     let courseId = assignment.courseId;
 
-    // --- اگر سال تحصیلی تغییر کند، باید کلاس فعلی هم متعلق به سال جدید باشد (حتی اگر classGroupId تغییر نکرده)
+    // --- اگر سال تحصیلی تغییر کند، باید کلاس فعلی هم متعلق به سال جدید باشد
     if (dto.academicYearId && dto.academicYearId !== assignment.academicYearId) {
       const year = await this.prisma.academicYear.findUnique({
         where: { id: dto.academicYearId },
@@ -129,7 +143,6 @@ export class CourseAssignmentsService {
 
       academicYearId = dto.academicYearId;
 
-      // اگر کلاس عوض نشده، باید چک کنیم کلاس فعلی با سال جدید سازگار است
       if (!dto.classGroupId) {
         const currentClass = await this.prisma.classGroup.findUnique({
           where: { id: assignment.classGroupId },
@@ -161,7 +174,9 @@ export class CourseAssignmentsService {
     }
 
     const nextMainTeacherId =
-      typeof dto.mainTeacherId === 'string' ? dto.mainTeacherId : assignment.mainTeacherId;
+      typeof dto.mainTeacherId === 'string'
+        ? dto.mainTeacherId
+        : assignment.mainTeacherId;
 
     if (typeof dto.mainTeacherId === 'string' && dto.mainTeacherId !== assignment.mainTeacherId) {
       const main = await this.prisma.teacher.findUnique({
@@ -185,12 +200,23 @@ export class CourseAssignmentsService {
       }
     }
 
-    // چک یکتا بودن ترکیب جدید
-    if (
+    // ✅ FIX حیاتی: اگر assignment وابستگی دارد، تغییر فیلدهای هویتی را ممنوع کنیم
+    const identityChanged =
       academicYearId !== assignment.academicYearId ||
       classGroupId !== assignment.classGroupId ||
-      courseId !== assignment.courseId
-    ) {
+      courseId !== assignment.courseId;
+
+    if (identityChanged) {
+      const deps = await this.getAssignmentDependenciesCounts(id);
+      if (deps.total > 0) {
+        throw new BadRequestException(
+          'این انتساب دارای برنامه/جلسه/امتحان ثبت‌شده است و تغییر سال/کلاس/درس باعث ناسازگاری داده‌ها می‌شود. برای تغییر، انتساب جدید بسازید.',
+        );
+      }
+    }
+
+    // چک یکتا بودن ترکیب جدید
+    if (identityChanged) {
       const existing = await this.prisma.courseAssignment.findUnique({
         where: {
           UniqueClassCoursePerYear: { academicYearId, classGroupId, courseId },
@@ -220,8 +246,8 @@ export class CourseAssignmentsService {
         academicYear: true,
         classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
         course: true,
-        mainTeacher: { include: { user: true } },
-        assistantTeacher: { include: { user: true } },
+        mainTeacher: { include: { user: this.safeUserSelect } },
+        assistantTeacher: { include: { user: this.safeUserSelect } },
       },
     });
   }
@@ -234,9 +260,11 @@ export class CourseAssignmentsService {
 
     if (!assignment) throw new NotFoundException('انتساب پیدا نشد');
 
-    if (assignment.scheduleSlots.length > 0) {
+    // ✅ FIX حیاتی: فقط scheduleSlots کافی نیست (جلسه/امتحان هم مهم است)
+    const deps = await this.getAssignmentDependenciesCounts(id);
+    if (deps.total > 0) {
       throw new BadRequestException(
-        'امکان حذف انتسابی که برای آن برنامه هفتگی تعریف شده وجود ندارد',
+        'امکان حذف انتسابی که برای آن برنامه/جلسه/امتحان ثبت شده وجود ندارد',
       );
     }
 
@@ -250,8 +278,8 @@ export class CourseAssignmentsService {
         academicYear: true,
         classGroup: { include: { fieldOfStudy: true, gradeLevel: true } },
         course: true,
-        mainTeacher: { include: { user: true } },
-        assistantTeacher: { include: { user: true } },
+        mainTeacher: { include: { user: this.safeUserSelect } },
+        assistantTeacher: { include: { user: this.safeUserSelect } },
       },
     });
   }
